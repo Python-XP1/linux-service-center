@@ -30,7 +30,7 @@
         "url": "http://127.0.0.1:5000"
     },
     {
-        "name": "Bluetooht",
+        "name": "Bluetooth",
         "service": "bluetooth.service",
         "path": "",
         "url": ""
