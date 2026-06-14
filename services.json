@@ -28,5 +28,11 @@
         "service": "budget.service",
         "path": "/home/pi/Budget_Tool",
         "url": "http://127.0.0.1:5000"
+    },
+    {
+        "name": "Bluetooht",
+        "service": "bluetooth.service",
+        "path": "",
+        "url": ""
     }
 ]
