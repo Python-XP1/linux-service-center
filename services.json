@@ -22,17 +22,5 @@
         "service": "einkaufsliste.service",
         "path": "/home/pi/Einkaufsliste",
         "url": "http://127.0.0.1:5050"
-    },
-    {
-        "name": "Budget Tool",
-        "service": "budget.service",
-        "path": "/home/pi/Budget_Tool",
-        "url": "http://127.0.0.1:5000"
-    },
-    {
-        "name": "Bluetooth",
-        "service": "bluetooth.service",
-        "path": "",
-        "url": ""
     }
 ]

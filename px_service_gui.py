@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import scrolledtext, messagebox
+from tkinter import scrolledtext, messagebox, filedialog
 import subprocess
 import json
 import os
@@ -11,26 +11,215 @@ import tempfile
 import threading
 from urllib.parse import urlparse
 
+try:
+    from PIL import Image, ImageTk
+except ImportError:
+    Image = None
+    ImageTk = None
+
+# =========================
+# Modern UI Theme
+# =========================
+COLORS = {
+    "bg": "#0b0f14",
+    "panel": "#111827",
+    "panel_2": "#162033",
+    "card": "#151d2b",
+    "row_active": "#10241c",
+    "row_inactive": "#27151b",
+    "row_failed": "#2a2112",
+    "text": "#e5e7eb",
+    "muted": "#8b98a9",
+    "border": "#263244",
+    "accent": "#22d3ee",
+    "accent_2": "#3b82f6",
+    "success": "#22c55e",
+    "danger": "#f43f5e",
+    "warning": "#f59e0b",
+    "button": "#1f2937",
+    "button_hover": "#334155",
+    "button_text": "#e5e7eb",
+}
+
+FONT_MAIN = ("Arial", 11)
+FONT_BOLD = ("Arial", 11, "bold")
+FONT_TITLE = ("Arial", 26, "bold")
+FONT_SMALL = ("Arial", 9)
+
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "services.json")
+LOGO_FILE = os.path.join(BASE_DIR, "logo.PNG")
+LOGO_CANDIDATES = [
+    LOGO_FILE,
+    os.path.join(BASE_DIR, "logo.jpeg"),
+    os.path.join(BASE_DIR, "logo.jpg"),
+    os.path.join(BASE_DIR, "logo.png"),
+]
+
+APP_VERSION = "v0.8.1"
+GITHUB_URL = "https://github.com/Python-XP1"
+PATREON_URL = "https://www.patreon.com/PythonXP"
+
 COMMAND_TIMEOUT = 10
 
-# Accept only systemd service unit names, never command-like arguments.
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
 
-# Tkinter variables are initialized after the root window exists.
 search_var = None
-
-# Error caches prevent repeated auto-refresh popups for the same issue.
+service_count_label = None
 last_config_error = None
 last_runtime_errors = set()
+refresh_generation = 0
+refresh_running = False
+refresh_pending = False
+
+
+def create_button(parent, text=None, command=None, width=None, variant="default", **kwargs):
+    """Create a flatter, darker Tk button with hover feedback."""
+    bg = COLORS["button"]
+    fg = COLORS["button_text"]
+    active_bg = COLORS["button_hover"]
+
+    if variant == "success":
+        bg = "#14532d"
+        active_bg = "#166534"
+    elif variant == "danger":
+        bg = "#7f1d1d"
+        active_bg = "#991b1b"
+    elif variant == "warning":
+        bg = "#78350f"
+        active_bg = "#92400e"
+    elif variant == "accent":
+        bg = "#0e7490"
+        active_bg = "#0891b2"
+    elif variant == "muted":
+        bg = "#111827"
+        active_bg = "#1f2937"
+
+    button = tk.Button(
+        parent,
+        text=text,
+        command=command,
+        width=width,
+        bg=bg,
+        fg=fg,
+        activebackground=active_bg,
+        activeforeground=fg,
+        relief=tk.FLAT,
+        bd=0,
+        highlightthickness=1,
+        highlightbackground=COLORS["border"],
+        highlightcolor=COLORS["accent"],
+        cursor="hand2",
+        font=FONT_BOLD,
+        padx=8,
+        pady=5,
+        **kwargs
+    )
+
+    def on_enter(_event):
+        button.configure(bg=active_bg)
+
+    def on_leave(_event):
+        button.configure(bg=bg)
+
+    button.bind("<Enter>", on_enter)
+    button.bind("<Leave>", on_leave)
+    return button
+
+
+def create_entry(parent, **kwargs):
+    """Create a dark themed input field."""
+    entry = tk.Entry(
+        parent,
+        bg="#0f172a",
+        fg=COLORS["text"],
+        insertbackground=COLORS["accent"],
+        relief=tk.FLAT,
+        highlightthickness=1,
+        highlightbackground=COLORS["border"],
+        highlightcolor=COLORS["accent"],
+        font=FONT_MAIN,
+        **kwargs
+    )
+    return entry
+
+
+def create_listbox(parent, **kwargs):
+    """Create a dark themed listbox."""
+    listbox = tk.Listbox(
+        parent,
+        bg="#0f172a",
+        fg=COLORS["text"],
+        selectbackground=COLORS["accent_2"],
+        selectforeground="#ffffff",
+        relief=tk.FLAT,
+        highlightthickness=1,
+        highlightbackground=COLORS["border"],
+        highlightcolor=COLORS["accent"],
+        font=FONT_MAIN,
+        **kwargs
+    )
+    return listbox
+
+def create_link_label(parent, text, command):
+    """Create a small footer link label."""
+    label = tk.Label(
+        parent,
+        text=text,
+        fg=COLORS["accent"],
+        bg=COLORS["bg"],
+        font=("Arial", 9, "bold"),
+        cursor="hand2"
+    )
+
+    def on_enter(_event):
+        label.configure(fg="#67e8f9")
+
+    def on_leave(_event):
+        label.configure(fg=COLORS["accent"])
+
+    label.bind("<Button-1>", lambda _event: command())
+    label.bind("<Enter>", on_enter)
+    label.bind("<Leave>", on_leave)
+    return label
+
+
+def format_service_summary(services):
+    active = 0
+    inactive = 0
+    failed = 0
+
+    for item in services:
+        status = get_status(item.get("service", ""))
+        if status == "active":
+            active += 1
+        elif status == "failed":
+            failed += 1
+        else:
+            inactive += 1
+
+    return f"{len(services)} Services · {active} aktiv · {inactive} inaktiv · {failed} failed"
+
+
+def uptime_color(uptime):
+    if not uptime or uptime == "-":
+        return COLORS["muted"]
+    if uptime.endswith("d"):
+        return COLORS["success"]
+    if uptime.endswith("h"):
+        return COLORS["accent_2"]
+    if uptime.endswith("m"):
+        return COLORS["warning"]
+    return COLORS["muted"]
 
 
 def load_services():
-    """Load and normalize the service configuration from disk."""
     global last_config_error
+
     if not os.path.exists(CONFIG_FILE):
         return []
+
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -44,116 +233,131 @@ def load_services():
 
     last_config_error = None
     services = []
+
     for item in data:
         if not isinstance(item, dict):
             continue
-        # Keep the rest of the app working even if JSON values are not strings.
+
         services.append({
             "name": str(item.get("name", "")).strip(),
             "service": str(item.get("service", "")).strip(),
             "path": str(item.get("path", "")).strip(),
             "url": str(item.get("url", "")).strip(),
         })
+
     return services
 
 
 def save_services(services):
-    """Write services.json atomically so a crash cannot leave a half-written file."""
     directory = os.path.dirname(CONFIG_FILE)
     fd, tmp_path = tempfile.mkstemp(prefix=".services.", suffix=".json", dir=directory)
+
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(services, f, indent=4, ensure_ascii=False)
             f.write("\n")
+
         os.replace(tmp_path, CONFIG_FILE)
+
     except OSError as e:
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
+
         show_error("Speichern fehlgeschlagen", str(e))
         return False
+
     return True
 
 
 def run_cmd(cmd):
-    """Run a short-lived command and return stdout/stderr as strings."""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=COMMAND_TIMEOUT)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=COMMAND_TIMEOUT
+        )
         return result.stdout.strip(), result.stderr.strip()
+
     except subprocess.TimeoutExpired:
         return "", f"Befehl nach {COMMAND_TIMEOUT}s abgebrochen: {' '.join(cmd)}"
+
     except Exception as e:
         return "", str(e)
 
 
 def show_error(title, message):
-    """Show a GUI error when possible and always mirror it to stdout."""
     try:
         if tk._default_root:
             messagebox.showerror(title, message)
     except tk.TclError:
         pass
+
     print(f"{title}: {message}")
 
 
 def report_config_error(message):
-    """Report configuration errors once until the file is readable again."""
     global last_config_error
+
     if message == last_config_error:
         return
+
     last_config_error = message
     show_error("Konfiguration fehlerhaft", message)
 
 
 def report_runtime_error(key, title, message):
-    """Report recurring runtime errors once per error key."""
     if key in last_runtime_errors:
         return
+
     last_runtime_errors.add(key)
     show_error(title, message)
 
 
 def is_valid_service_name(service):
-    """Return True for safe systemd .service unit names."""
     return bool(service and SERVICE_NAME_RE.fullmatch(service) and not service.startswith("-"))
 
 
 def is_valid_url(url):
-    """Allow only browser-openable HTTP(S) URLs."""
     if not url:
         return True
+
     parsed = urlparse(url)
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
 def normalize_path(path):
-    """Expand user input to an absolute local filesystem path."""
     if not path:
         return ""
+
     return os.path.abspath(os.path.expanduser(path))
 
 
 def validate_service_config(item):
-    """Validate one service entry before it is persisted or used."""
     if not item["name"] or not item["service"]:
         return "Anzeigename und Systemd Service müssen ausgefüllt sein."
+
     if not is_valid_service_name(item["service"]):
         return "Der Systemd Service muss wie ein gültiger .service-Name aussehen, z. B. ssh.service."
+
     if item["url"] and not is_valid_url(item["url"]):
         return "Die URL muss mit http:// oder https:// beginnen."
+
     if item["path"]:
         item["path"] = normalize_path(item["path"])
+
     return None
 
 
 def run_background(task, on_done=None):
-    """Run blocking work off the Tkinter thread and deliver the result safely."""
     def worker():
         try:
             result = task()
         except Exception as e:
             result = e
+
         if on_done:
             try:
                 root.after(0, lambda: on_done(result))
@@ -163,43 +367,86 @@ def run_background(task, on_done=None):
     threading.Thread(target=worker, daemon=True).start()
 
 
+def invalidate_refresh():
+    global refresh_generation
+    refresh_generation += 1
+
+
+def run_systemctl_command(cmd):
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=30
+    )
+    message = result.stderr.strip() or result.stdout.strip()
+    return result.returncode == 0, message
+
+
+def needs_authentication(message):
+    lowered = message.lower()
+    return (
+        "password" in lowered
+        or "authentication" in lowered
+        or "interactive authentication" in lowered
+        or "not permitted" in lowered
+    )
+
+
 def run_systemctl_action(action, service):
-    """Execute privileged systemctl changes with a strict timeout."""
     try:
-        result = subprocess.run(
-            ["sudo", "systemctl", action, service],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        message = result.stderr.strip() or result.stdout.strip()
-        return result.returncode == 0, message
+        base_cmd = ["systemctl", action, service]
+
+        if os.geteuid() == 0:
+            return run_systemctl_command(base_cmd)
+
+        ok, message = run_systemctl_command(["sudo", "-n"] + base_cmd)
+        if ok:
+            return True, message
+
+        pkexec_cmd = shutil.which("pkexec")
+        if needs_authentication(message) and pkexec_cmd:
+            ok, pkexec_message = run_systemctl_command([pkexec_cmd] + base_cmd)
+            if ok:
+                return True, pkexec_message
+            message = pkexec_message or message
+
+        if needs_authentication(message):
+            message = (
+                "Für diese Aktion fehlen Rechte.\n"
+                "Erlaube die angezeigte Authentifizierung, starte das Programm mit passenden Rechten "
+                "oder richte sudoers für systemctl ein.\n\n"
+                f"Originalmeldung:\n{message}"
+            )
+        return False, message
+
     except subprocess.TimeoutExpired:
         return False, "systemctl hat nach 30 Sekunden nicht geantwortet."
+
     except OSError as e:
         return False, str(e)
 
 
 def get_status(service):
-    """Read the active/inactive/failed state of a service."""
     if not is_valid_service_name(service):
         return "invalid"
+
     out, _ = run_cmd(["systemctl", "is-active", service])
     return out if out else "unknown"
 
 
 def get_enabled_status(service):
-    """Read whether a service is enabled for autostart."""
     if not is_valid_service_name(service):
         return "invalid"
+
     out, _ = run_cmd(["systemctl", "is-enabled", service])
     return out if out else "unknown"
 
 
 def get_uptime(service):
-    """Return a compact uptime string for active services."""
     if not is_valid_service_name(service):
         return "-"
+
     out, _ = run_cmd([
         "systemctl",
         "show",
@@ -218,6 +465,7 @@ def get_uptime(service):
             text=True,
             timeout=COMMAND_TIMEOUT
         )
+
         start_ts = int(result.stdout.strip())
         diff = int(time.time()) - start_ts
 
@@ -227,13 +475,14 @@ def get_uptime(service):
             return f"{diff // 60}m"
         if diff < 86400:
             return f"{diff // 3600}h"
+
         return f"{diff // 86400}d"
+
     except (ValueError, subprocess.SubprocessError, OSError):
         return "-"
 
 
 def get_cpu_usage():
-    """Return current CPU usage for the dashboard."""
     try:
         return f"{psutil.cpu_percent(interval=0.1):.1f}%"
     except (psutil.Error, OSError) as e:
@@ -242,7 +491,6 @@ def get_cpu_usage():
 
 
 def get_ram_usage():
-    """Return current RAM usage for the dashboard."""
     try:
         return f"{psutil.virtual_memory().percent:.1f}%"
     except (psutil.Error, OSError) as e:
@@ -251,10 +499,11 @@ def get_ram_usage():
 
 
 def get_temperature():
-    """Return Raspberry Pi temperature when vcgencmd is available."""
     if not shutil.which("vcgencmd"):
         return "N/A"
+
     out, _ = run_cmd(["vcgencmd", "measure_temp"])
+
     try:
         return out.split("=")[1]
     except IndexError:
@@ -262,7 +511,6 @@ def get_temperature():
 
 
 def get_disk_free():
-    """Return free space on the root filesystem."""
     try:
         disk = psutil.disk_usage("/")
         return f"{disk.free / (1024 ** 3):.1f} GB"
@@ -272,47 +520,67 @@ def get_disk_free():
 
 
 def control_service(action, service):
-    """Start, stop, or restart a service without freezing the UI."""
     if action not in {"start", "stop", "restart"} or not is_valid_service_name(service):
         messagebox.showerror("Ungültige Aktion", "Service oder Aktion ist ungültig.")
         return
+
+    invalidate_refresh()
+    action_labels = {
+        "start": "Start",
+        "stop": "Stop",
+        "restart": "Restart",
+    }
+
+    if service_count_label:
+        service_count_label.config(text=f"{action_labels[action]} läuft für {service}...")
 
     def task():
         return run_systemctl_action(action, service)
 
     def done(result):
-        # The background worker returns either an exception or (success, message).
         if isinstance(result, Exception):
             messagebox.showerror("systemctl Fehler", str(result))
         elif not result[0]:
             messagebox.showerror("systemctl Fehler", result[1] or "Aktion fehlgeschlagen.")
+        elif service_count_label:
+            service_count_label.config(text=f"{action_labels[action]} ausgeführt für {service}. Status wird geprüft...")
+
         refresh_services()
 
     run_background(task, done)
 
 
 def control_autostart(action, service):
-    """Enable or disable service autostart without blocking Tkinter."""
     if action not in {"enable", "disable"} or not is_valid_service_name(service):
         messagebox.showerror("Ungültige Aktion", "Service oder Aktion ist ungültig.")
         return
+
+    invalidate_refresh()
+    if service_count_label:
+        service_count_label.config(text=f"Autostart-{action} läuft für {service}...")
 
     def task():
         return run_systemctl_action(action, service)
 
     def done(result):
-        # Always refresh after the command so the UI reflects the real system state.
         if isinstance(result, Exception):
             messagebox.showerror("systemctl Fehler", str(result))
         elif not result[0]:
             messagebox.showerror("systemctl Fehler", result[1] or "Aktion fehlgeschlagen.")
+
         refresh_services()
 
     run_background(task, done)
 
 
+def open_external_link(url):
+    if url and is_valid_url(url):
+        subprocess.Popen(["xdg-open", url])
+    else:
+        messagebox.showwarning("Link ungültig", "Der hinterlegte Link ist ungültig.")
+
+
 def open_url(url):
-    """Open a configured service URL with the desktop default browser."""
     if url and is_valid_url(url):
         try:
             subprocess.Popen(["xdg-open", url])
@@ -320,12 +588,13 @@ def open_url(url):
         except OSError as e:
             messagebox.showerror("URL öffnen fehlgeschlagen", str(e))
             return
+
     messagebox.showwarning("URL ungültig", "Keine gültige http(s)-URL hinterlegt.")
 
 
 def open_folder(path):
-    """Open a configured project folder with the desktop file manager."""
     safe_path = normalize_path(path)
+
     if safe_path and os.path.isdir(safe_path):
         try:
             subprocess.Popen(["xdg-open", safe_path])
@@ -336,41 +605,51 @@ def open_folder(path):
 
 
 def open_code(path):
-    """Open a configured project folder in VS Code."""
     safe_path = normalize_path(path)
+
     if not safe_path or not os.path.isdir(safe_path):
         messagebox.showwarning("Pfad fehlt", "Projektordner nicht gefunden.")
         return
 
     try:
+        code_cmd = shutil.which("code")
+
+        if not code_cmd:
+            messagebox.showerror(
+                "VS Code Fehler",
+                "VS Code wurde nicht gefunden."
+            )
+            return
+
         subprocess.Popen(
-            ["/usr/bin/code", safe_path],
+            [code_cmd, safe_path],
             cwd=safe_path,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True
         )
+
     except Exception as e:
         messagebox.showerror("VS Code Fehler", str(e))
 
 
 def show_logs(service):
-    """Display the latest journalctl lines for one service."""
     if not is_valid_service_name(service):
         messagebox.showerror("Ungültiger Service", "Der Service-Name ist ungültig.")
         return
+
     out, err = run_cmd(["journalctl", "-u", service, "-n", "120", "--no-pager"])
 
     win = tk.Toplevel(root)
     win.title(f"Logs: {service}")
     win.geometry("950x540")
-    win.configure(bg="#121212")
+    win.configure(bg=COLORS["bg"])
 
     text = scrolledtext.ScrolledText(
         win,
         wrap=tk.WORD,
         bg="#0f0f0f",
-        fg="#dddddd",
+        fg=COLORS["text"],
         insertbackground="white"
     )
     text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -379,45 +658,45 @@ def show_logs(service):
 
 
 def browse_services(target_entry):
-    """Show installed systemd services and copy the selection into an entry."""
     win = tk.Toplevel(root)
     win.title("Systemd Services durchsuchen")
     win.geometry("720x520")
-    win.configure(bg="#121212")
+    win.configure(bg=COLORS["bg"])
 
     tk.Label(
         win,
         text="Doppelklick auf einen Service zum Übernehmen",
         fg="white",
-        bg="#121212",
+        bg=COLORS["bg"],
         font=("Arial", 11, "bold")
     ).pack(pady=10)
 
-    search_entry = tk.Entry(win, width=70)
+    search_entry = create_entry(win, width=70)
     search_entry.pack(padx=10, pady=5)
 
-    listbox = tk.Listbox(win, bg="#1e1e1e", fg="white", width=85)
+    listbox = create_listbox(win, width=85)
     listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
     out, err = run_cmd(["systemctl", "list-unit-files", "--type=service", "--no-legend"])
+
     if err and not out:
         messagebox.showwarning("Services laden", err)
 
-    # systemctl prints columns; the first token is the unit name.
     all_services = sorted([line.split()[0] for line in out.splitlines() if line.strip()])
 
     def fill_list(filter_text=""):
-        """Filter the service list as the user types."""
         listbox.delete(0, tk.END)
+
         for service in all_services:
             if filter_text.lower() in service.lower():
                 listbox.insert(tk.END, service)
 
     def select_service(event=None):
-        """Copy the chosen service name back into the form."""
         selection = listbox.curselection()
+
         if not selection:
             return
+
         service = listbox.get(selection[0])
         target_entry.delete(0, tk.END)
         target_entry.insert(0, service)
@@ -426,56 +705,55 @@ def browse_services(target_entry):
     search_entry.bind("<KeyRelease>", lambda e: fill_list(search_entry.get()))
     listbox.bind("<Double-Button-1>", select_service)
 
-    tk.Button(win, text="Übernehmen", command=select_service).pack(pady=10)
+    create_button(win, text="Übernehmen", command=select_service).pack(pady=10)
+
     fill_list()
 
 
 def project_form(title_text, existing=None, index=None):
-    """Create the add/edit service dialog."""
     win = tk.Toplevel(root)
     win.title(title_text)
     win.geometry("520x430")
-    win.configure(bg="#121212")
+    win.configure(bg=COLORS["bg"])
 
     fields = {}
 
-    tk.Label(win, text="Anzeigename", fg="white", bg="#121212").pack(anchor="w", padx=20, pady=(10, 0))
-    fields["name"] = tk.Entry(win, width=60)
+    tk.Label(win, text="Anzeigename", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
+    fields["name"] = create_entry(win, width=60)
     fields["name"].pack(padx=20, pady=3)
     fields["name"].insert(0, existing.get("name", "") if existing else "")
 
-    tk.Label(win, text="Systemd Service", fg="white", bg="#121212").pack(anchor="w", padx=20, pady=(10, 0))
-    fields["service"] = tk.Entry(win, width=60)
+    tk.Label(win, text="Systemd Service", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
+    fields["service"] = create_entry(win, width=60)
     fields["service"].pack(padx=20, pady=3)
     fields["service"].insert(0, existing.get("service", "") if existing else "")
 
     tk.Label(
         win,
         text="Beispiel: ssh.service, code-server.service, bluetooth.service",
-        fg="#888888",
-        bg="#121212",
+        fg=COLORS["muted"],
+        bg=COLORS["bg"],
         font=("Arial", 9)
     ).pack(anchor="w", padx=20)
 
-    tk.Button(
+    create_button(
         win,
         text="Services durchsuchen",
         width=22,
         command=lambda: browse_services(fields["service"])
     ).pack(pady=6)
 
-    tk.Label(win, text="Ordner/Pfad optional", fg="white", bg="#121212").pack(anchor="w", padx=20, pady=(10, 0))
-    fields["path"] = tk.Entry(win, width=60)
+    tk.Label(win, text="Ordner/Pfad optional", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
+    fields["path"] = create_entry(win, width=60)
     fields["path"].pack(padx=20, pady=3)
     fields["path"].insert(0, existing.get("path", "") if existing else "")
 
-    tk.Label(win, text="URL optional", fg="white", bg="#121212").pack(anchor="w", padx=20, pady=(10, 0))
-    fields["url"] = tk.Entry(win, width=60)
+    tk.Label(win, text="URL optional", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
+    fields["url"] = create_entry(win, width=60)
     fields["url"].pack(padx=20, pady=3)
     fields["url"].insert(0, existing.get("url", "") if existing else "")
 
     def save_project():
-        """Validate and persist the dialog contents."""
         services = load_services()
 
         item = {
@@ -486,6 +764,7 @@ def project_form(title_text, existing=None, index=None):
         }
 
         validation_error = validate_service_config(item)
+
         if validation_error:
             messagebox.showwarning("Eingabe prüfen", validation_error)
             return
@@ -500,70 +779,517 @@ def project_form(title_text, existing=None, index=None):
 
         if not save_services(services):
             return
+
         refresh_services()
         win.destroy()
 
-    tk.Button(win, text="Speichern", width=18, command=save_project).pack(pady=18)
+    create_button(win, text="Speichern", width=18, command=save_project).pack(pady=18)
 
+
+
+def normalize_service_filename(name):
+    """Normalize user input to a safe systemd .service filename."""
+    service = name.strip()
+    if service and not service.endswith(".service"):
+        service += ".service"
+    return service
+
+
+def systemd_quote_arg(value):
+    """Quote a systemd ExecStart argument, preserving paths with spaces."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def has_line_break(value):
+    return "\n" in value or "\r" in value
+
+
+def build_service_unit(description, command, working_dir, user_name, restart_policy):
+    """Build the text content of a simple systemd service file."""
+    lines = [
+        "[Unit]",
+        f"Description={description}",
+        "After=network.target",
+        "",
+        "[Service]",
+        "Type=simple",
+    ]
+
+    if user_name:
+        lines.append(f"User={user_name}")
+
+    if working_dir:
+        lines.append(f"WorkingDirectory={working_dir}")
+
+    lines.extend([
+        f"ExecStart={command}",
+        f"Restart={restart_policy}",
+        "RestartSec=5",
+        "",
+        "[Install]",
+        "WantedBy=multi-user.target",
+        ""
+    ])
+
+    return "\n".join(lines)
+
+
+def write_systemd_service(service_name, unit_text):
+    """Write a service file into /etc/systemd/system using sudo tee."""
+    if not is_valid_service_name(service_name):
+        return False, "Ungültiger Service-Name. Beispiel: meinprojekt.service"
+
+    service_path = f"/etc/systemd/system/{service_name}"
+
+    try:
+        result = subprocess.run(
+            ["sudo", "tee", service_path],
+            input=unit_text,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode != 0:
+            return False, result.stderr.strip() or "Service-Datei konnte nicht geschrieben werden."
+
+        chmod_result = subprocess.run(
+            ["sudo", "chmod", "644", service_path],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if chmod_result.returncode != 0:
+            return False, chmod_result.stderr.strip() or "Rechte konnten nicht gesetzt werden."
+
+        reload_result = subprocess.run(
+            ["sudo", "systemctl", "daemon-reload"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if reload_result.returncode != 0:
+            return False, reload_result.stderr.strip() or "daemon-reload fehlgeschlagen."
+
+        return True, f"Service erstellt: {service_path}"
+
+    except subprocess.TimeoutExpired:
+        return False, "Schreibvorgang hat zu lange gedauert."
+    except OSError as e:
+        return False, str(e)
+
+
+def service_assistant_window():
+    """Simple assistant that creates a real systemd .service file and adds it to the panel."""
+    win = tk.Toplevel(root)
+    win.title("+ Service Assistent")
+    win.geometry("760x620")
+    win.minsize(720, 560)
+    win.configure(bg=COLORS["bg"])
+
+    outer = tk.Frame(win, bg=COLORS["bg"])
+    outer.pack(fill=tk.BOTH, expand=True)
+
+    # Scrollbarer Inhaltsbereich: Der Button bleibt unten immer sichtbar,
+    # auch bei kleinen VNC-Fenstern oder wenn "Erweiterte Einstellungen" offen ist.
+    scroll_area = tk.Frame(outer, bg=COLORS["bg"])
+    scroll_area.pack(fill=tk.BOTH, expand=True)
+
+    canvas = tk.Canvas(
+        scroll_area,
+        bg=COLORS["bg"],
+        highlightthickness=0,
+        bd=0
+    )
+    scrollbar = tk.Scrollbar(scroll_area, orient=tk.VERTICAL, command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    content = tk.Frame(canvas, bg=COLORS["bg"])
+    content_window = canvas.create_window((0, 0), window=content, anchor="nw")
+
+    def update_scroll_region(event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        canvas.itemconfigure(content_window, width=canvas.winfo_width())
+
+    def on_mousewheel(event):
+        # Linux/X11 liefert Button-4/Button-5, Windows/macOS meist MouseWheel.
+        if event.num == 4:
+            canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            canvas.yview_scroll(1, "units")
+        else:
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    content.bind("<Configure>", update_scroll_region)
+    canvas.bind("<Configure>", update_scroll_region)
+    canvas.bind_all("<MouseWheel>", on_mousewheel)
+    canvas.bind_all("<Button-4>", on_mousewheel)
+    canvas.bind_all("<Button-5>", on_mousewheel)
+
+    def close_assistant():
+        try:
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+        except tk.TclError:
+            pass
+
+        try:
+            win.destroy()
+        except tk.TclError:
+            pass
+
+    win.protocol("WM_DELETE_WINDOW", close_assistant)
+
+    content_inner = tk.Frame(content, bg=COLORS["bg"])
+    content_inner.pack(fill=tk.BOTH, expand=True, padx=24, pady=(18, 8))
+    content = content_inner
+
+    tk.Label(
+        content,
+        text="Service Assistent",
+        fg=COLORS["text"],
+        bg=COLORS["bg"],
+        font=("Arial", 18, "bold")
+    ).pack(anchor="w")
+
+    tk.Label(
+        content,
+        text="Einfacher Modus: Projektordner wählen, Python-Datei angeben, Service erstellen. Erweiterte Felder sind optional.",
+        fg=COLORS["muted"],
+        bg=COLORS["bg"],
+        font=FONT_MAIN,
+        wraplength=680,
+        justify="left"
+    ).pack(anchor="w", pady=(2, 14))
+
+    fields = {}
+
+    def add_field(parent, key, label, hint="", default="", width=70):
+        tk.Label(parent, text=label, fg=COLORS["text"], bg=COLORS["bg"], font=FONT_BOLD).pack(anchor="w", pady=(8, 0))
+        entry = create_entry(parent, width=width)
+        entry.pack(anchor="w", pady=(3, 0), fill=tk.X)
+        if default:
+            entry.insert(0, default)
+        if hint:
+            tk.Label(parent, text=hint, fg=COLORS["muted"], bg=COLORS["bg"], font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
+        fields[key] = entry
+        return entry
+
+    simple_frame = tk.Frame(content, bg=COLORS["bg"])
+    simple_frame.pack(fill=tk.X)
+
+    name_entry = add_field(simple_frame, "name", "Projektname", "So erscheint der Dienst im Panel, z.B. Einkaufsliste")
+
+    tk.Label(simple_frame, text="Projektordner", fg=COLORS["text"], bg=COLORS["bg"], font=FONT_BOLD).pack(anchor="w", pady=(8, 0))
+    folder_row = tk.Frame(simple_frame, bg=COLORS["bg"])
+    folder_row.pack(fill=tk.X, pady=(3, 0))
+    workdir_entry = create_entry(folder_row, width=58)
+    workdir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    fields["workdir"] = workdir_entry
+
+    def choose_folder():
+        selected = filedialog.askdirectory(title="Projektordner wählen")
+        if not selected:
+            return
+        workdir_entry.delete(0, tk.END)
+        workdir_entry.insert(0, selected)
+        maybe_autofill_from_folder(selected)
+        update_preview()
+
+    create_button(folder_row, text="Ordner wählen", width=14, command=choose_folder, variant="muted").pack(side=tk.LEFT, padx=(8, 0))
+    tk.Label(simple_frame, text="Beispiel: /home/pi/Einkaufsliste", fg=COLORS["muted"], bg=COLORS["bg"], font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
+
+    script_entry = add_field(simple_frame, "script", "Python-Datei", "Meistens app.py oder main.py. Absoluter Pfad ist auch erlaubt.", "app.py")
+    url_entry = add_field(simple_frame, "url", "URL optional", "Für Webapps, z.B. http://127.0.0.1:5050")
+
+    options_frame = tk.Frame(simple_frame, bg=COLORS["bg"])
+    options_frame.pack(anchor="w", pady=(12, 0), fill=tk.X)
+
+    enable_var = tk.BooleanVar(value=True)
+    start_var = tk.BooleanVar(value=False)
+    add_panel_var = tk.BooleanVar(value=True)
+
+    for text, var in [
+        ("Autostart aktivieren", enable_var),
+        ("Service nach Erstellung direkt starten", start_var),
+        ("Direkt zur Panel-Liste hinzufügen", add_panel_var),
+    ]:
+        cb = tk.Checkbutton(
+            options_frame,
+            text=text,
+            variable=var,
+            fg=COLORS["text"],
+            bg=COLORS["bg"],
+            activebackground=COLORS["bg"],
+            activeforeground=COLORS["text"],
+            selectcolor=COLORS["panel"],
+            font=FONT_MAIN
+        )
+        cb.pack(anchor="w")
+
+    advanced_visible = tk.BooleanVar(value=False)
+    advanced_frame = tk.Frame(content, bg=COLORS["panel"], padx=12, pady=10, highlightthickness=1, highlightbackground=COLORS["border"])
+
+    current_user = os.environ.get("USER", "pi")
+    service_entry = add_field(advanced_frame, "service", "Service-Dateiname", "Optional. Wird automatisch aus dem Projektnamen erzeugt, z.B. einkaufsliste.service")
+    user_entry = add_field(advanced_frame, "user", "Linux-Benutzer", "Normalerweise: pi", current_user)
+    command_entry = add_field(advanced_frame, "command", "Startbefehl", "Optional. Wird automatisch gebaut: /usr/bin/python3 /pfad/app.py")
+
+    restart_row = tk.Frame(advanced_frame, bg=COLORS["panel"])
+    restart_row.pack(anchor="w", pady=(8, 0), fill=tk.X)
+    tk.Label(restart_row, text="Restart-Verhalten", fg=COLORS["text"], bg=COLORS["panel"], font=FONT_BOLD).pack(anchor="w")
+    restart_var = tk.StringVar(value="always")
+    restart_menu = tk.OptionMenu(restart_row, restart_var, "always", "on-failure", "no")
+    restart_menu.configure(bg=COLORS["button"], fg=COLORS["text"], activebackground=COLORS["button_hover"], activeforeground=COLORS["text"], relief=tk.FLAT, highlightthickness=0)
+    restart_menu["menu"].configure(bg=COLORS["button"], fg=COLORS["text"])
+    restart_menu.pack(anchor="w", pady=(3, 0))
+
+    def toggle_advanced():
+        if advanced_visible.get():
+            advanced_frame.pack_forget()
+            advanced_visible.set(False)
+            advanced_button.configure(text="Erweiterte Einstellungen anzeigen")
+        else:
+            advanced_frame.pack(fill=tk.X, pady=(12, 0))
+            advanced_visible.set(True)
+            advanced_button.configure(text="Erweiterte Einstellungen ausblenden")
+
+    advanced_button = create_button(content, text="Erweiterte Einstellungen anzeigen", width=30, command=toggle_advanced, variant="muted")
+    advanced_button.pack(anchor="w", pady=(12, 0))
+
+    preview_box = scrolledtext.ScrolledText(
+        content,
+        height=6,
+        bg="#0f172a",
+        fg=COLORS["text"],
+        insertbackground=COLORS["accent"],
+        relief=tk.FLAT,
+        highlightthickness=1,
+        highlightbackground=COLORS["border"],
+        font=("Courier", 9)
+    )
+    preview_box.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
+
+    button_bar = tk.Frame(outer, bg=COLORS["panel"], padx=16, pady=12)
+    button_bar.pack(fill=tk.X, side=tk.BOTTOM)
+
+    def slugify_service_name(value):
+        value = value.strip().lower()
+        value = value.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+        value = re.sub(r"[^a-z0-9_.@:-]+", "-", value).strip("-_.")
+        if not value:
+            value = "meinprojekt"
+        return normalize_service_filename(value)
+
+    def maybe_autofill_from_folder(folder):
+        folder = normalize_path(folder)
+        if not folder:
+            return
+
+        if not fields["name"].get().strip():
+            fields["name"].insert(0, os.path.basename(folder.rstrip(os.sep)) or "Mein Projekt")
+
+        candidates = ["app.py", "main.py", "server.py", "run.py"]
+        for filename in candidates:
+            if os.path.isfile(os.path.join(folder, filename)):
+                fields["script"].delete(0, tk.END)
+                fields["script"].insert(0, filename)
+                break
+
+    def resolve_script_path(workdir, script_value):
+        script_value = script_value.strip()
+        if not script_value:
+            return ""
+        if os.path.isabs(script_value):
+            return normalize_path(script_value)
+        return normalize_path(os.path.join(workdir, script_value))
+
+    def collect_data():
+        name = fields["name"].get().strip()
+        workdir = normalize_path(fields["workdir"].get().strip())
+        script_path = resolve_script_path(workdir, fields["script"].get().strip())
+        url = fields["url"].get().strip()
+        service_name = normalize_service_filename(fields["service"].get().strip()) if fields["service"].get().strip() else slugify_service_name(name)
+        user_name = fields["user"].get().strip()
+        restart_policy = restart_var.get()
+        command = fields["command"].get().strip()
+
+        if not name:
+            return None, "Projektname fehlt."
+        if any(has_line_break(value) for value in [name, workdir, script_path, user_name, command]):
+            return None, "Eingaben für die Service-Datei dürfen keine Zeilenumbrüche enthalten."
+        if not is_valid_service_name(service_name):
+            return None, "Service-Dateiname ungültig. Beispiel: meinprojekt.service"
+        if not workdir or not os.path.isdir(workdir):
+            return None, "Projektordner existiert nicht."
+        if not script_path or not os.path.isfile(script_path):
+            return None, "Python-Datei wurde nicht gefunden. Beispiel: app.py oder /home/pi/projekt/app.py"
+        if url and not is_valid_url(url):
+            return None, "URL muss mit http:// oder https:// beginnen."
+        if not command:
+            python_cmd = shutil.which("python3") or "/usr/bin/python3"
+            command = f"{systemd_quote_arg(python_cmd)} {systemd_quote_arg(script_path)}"
+
+        unit_text = build_service_unit(
+            description=name,
+            command=command,
+            working_dir=workdir,
+            user_name=user_name,
+            restart_policy=restart_policy
+        )
+
+        return {
+            "name": name,
+            "service": service_name,
+            "path": workdir,
+            "url": url,
+            "unit_text": unit_text,
+            "enable": enable_var.get(),
+            "start": start_var.get(),
+            "add_panel": add_panel_var.get(),
+        }, None
+
+    def update_preview(event=None):
+        data, error = collect_data()
+        preview_box.config(state=tk.NORMAL)
+        preview_box.delete("1.0", tk.END)
+        if error:
+            preview_box.insert(tk.END, f"Vorschau noch nicht vollständig:\n{error}")
+        else:
+            preview_box.insert(tk.END, data["unit_text"])
+        preview_box.config(state=tk.DISABLED)
+
+    for entry in fields.values():
+        entry.bind("<KeyRelease>", update_preview)
+    restart_var.trace_add("write", lambda *_: update_preview())
+
+    def create_service():
+        data, error = collect_data()
+        if error:
+            messagebox.showwarning("Eingabe prüfen", error)
+            return
+
+        if not messagebox.askyesno(
+            "Service erstellen",
+            f"Soll {data['service']} wirklich unter /etc/systemd/system erstellt werden?"
+        ):
+            return
+
+        def task():
+            ok, msg = write_systemd_service(data["service"], data["unit_text"])
+            if not ok:
+                return False, msg
+
+            if data["enable"]:
+                ok, msg = run_systemctl_action("enable", data["service"])
+                if not ok:
+                    return False, msg
+
+            if data["start"]:
+                ok, msg = run_systemctl_action("start", data["service"])
+                if not ok:
+                    return False, msg
+
+            if data["add_panel"]:
+                services = load_services()
+                item = {
+                    "name": data["name"],
+                    "service": data["service"],
+                    "path": data["path"],
+                    "url": data["url"],
+                }
+                existing_index = next((i for i, s in enumerate(services) if s.get("service") == data["service"]), None)
+                if existing_index is None:
+                    services.append(item)
+                else:
+                    services[existing_index] = item
+                if not save_services(services):
+                    return False, "Service wurde erstellt, aber nicht in services.json gespeichert."
+
+            return True, "Service wurde erfolgreich erstellt."
+
+        def done(result):
+            if isinstance(result, Exception):
+                messagebox.showerror("Service Assistent", str(result))
+                return
+            ok, msg = result
+            if ok:
+                messagebox.showinfo("Service Assistent", msg)
+                refresh_services()
+                close_assistant()
+            else:
+                messagebox.showerror("Service Assistent", msg or "Erstellung fehlgeschlagen.")
+
+        run_background(task, done)
+
+    create_button(button_bar, text="Abbrechen", command=close_assistant, width=12, variant="muted").pack(side=tk.RIGHT, padx=6)
+    create_button(button_bar, text="Service erstellen", command=create_service, width=20, variant="success").pack(side=tk.RIGHT, padx=6)
+
+    update_preview()
 
 def add_project_window():
-    """Open the dialog for a new service entry."""
     project_form("Service hinzufügen")
 
 
 def edit_service_by_index(index):
-    """Open the edit dialog for the service at the given config index."""
     services = load_services()
+
     if 0 <= index < len(services):
         project_form("Service bearbeiten", services[index], index)
 
 
 def edit_project_window():
-    """Let the user choose a configured service to edit."""
     services = load_services()
 
     win = tk.Toplevel(root)
     win.title("Service bearbeiten")
     win.geometry("430x270")
-    win.configure(bg="#121212")
+    win.configure(bg=COLORS["bg"])
 
-    listbox = tk.Listbox(win, width=46)
+    listbox = create_listbox(win, width=46)
     listbox.pack(padx=20, pady=20, fill=tk.BOTH, expand=True)
 
     for item in services:
         listbox.insert(tk.END, item.get("name", "Unbenannt"))
 
     def edit_selected(event=None):
-        """Open the edit dialog for the currently selected list item."""
         selection = listbox.curselection()
+
         if not selection:
             return
+
         index = selection[0]
         win.destroy()
         edit_service_by_index(index)
 
     listbox.bind("<Double-Button-1>", edit_selected)
-    tk.Button(win, text="Bearbeiten", width=18, command=edit_selected).pack(pady=10)
+
+    create_button(win, text="Bearbeiten", width=18, command=edit_selected).pack(pady=10)
 
 
 def delete_project_window():
-    """Let the user remove a service entry from services.json."""
     services = load_services()
 
     win = tk.Toplevel(root)
     win.title("Service entfernen")
     win.geometry("430x270")
-    win.configure(bg="#121212")
+    win.configure(bg=COLORS["bg"])
 
-    listbox = tk.Listbox(win, width=46)
+    listbox = create_listbox(win, width=46)
     listbox.pack(padx=20, pady=20, fill=tk.BOTH, expand=True)
 
     for item in services:
         listbox.insert(tk.END, item.get("name", "Unbenannt"))
 
     def delete_selected():
-        """Confirm and remove the selected service from the config file."""
         selection = listbox.curselection()
+
         if not selection:
             return
 
@@ -576,30 +1302,66 @@ def delete_project_window():
             except IndexError:
                 messagebox.showerror("Entfernen fehlgeschlagen", "Der ausgewählte Service existiert nicht mehr.")
                 return
+
             if not save_services(services):
                 return
+
             refresh_services()
             win.destroy()
 
-    tk.Button(win, text="Entfernen", width=18, command=delete_selected).pack(pady=10)
+    create_button(win, text="Entfernen", width=18, command=delete_selected).pack(pady=10)
 
 
 def create_info_card(parent, title, value, color):
-    """Create one compact system information card."""
-    frame = tk.Frame(parent, bg="#1e1e1e", padx=18, pady=8)
+    frame = tk.Frame(parent, bg=COLORS["card"], padx=20, pady=10, highlightthickness=1, highlightbackground=COLORS["border"])
     frame.pack(side=tk.LEFT, padx=8)
 
-    tk.Label(frame, text=title, fg="#aaaaaa", bg="#1e1e1e", font=("Arial", 9, "bold")).pack()
+    tk.Label(
+        frame,
+        text=title,
+        fg=COLORS["muted"],
+        bg=COLORS["card"],
+        font=("Arial", 9, "bold")
+    ).pack()
 
-    value_label = tk.Label(frame, text=value, fg=color, bg="#1e1e1e", font=("Arial", 13, "bold"))
+    value_label = tk.Label(
+        frame,
+        text=value,
+        fg=color,
+        bg=COLORS["card"],
+        font=("Arial", 14, "bold")
+    )
     value_label.pack()
 
     return value_label
 
 
+def load_logo(parent):
+    logo_path = next((p for p in LOGO_CANDIDATES if os.path.exists(p)), None)
+
+    if not logo_path:
+        return
+
+    if Image is None or ImageTk is None:
+        print("Pillow fehlt. Logo wird nicht geladen.")
+        return
+
+    try:
+        logo_img = Image.open(logo_path)
+        logo_img.thumbnail((90, 90))
+
+        logo_photo = ImageTk.PhotoImage(logo_img)
+
+        logo_label = tk.Label(parent, image=logo_photo, bg=COLORS["bg"])
+        logo_label.image = logo_photo
+        logo_label.pack(side=tk.LEFT, padx=15)
+
+    except Exception as e:
+        print("Logo konnte nicht geladen werden:", e)
+
+
 def add_header():
-    """Render the fixed table header above the service rows."""
-    header = tk.Frame(service_frame, bg="#2a2a2a")
+    header = tk.Frame(service_frame, bg=COLORS["panel_2"])
     header.pack(fill=tk.X, padx=12, pady=(10, 5))
 
     for text, width in [
@@ -609,84 +1371,184 @@ def add_header():
         ("Uptime", 8),
         ("Aktionen", 70)
     ]:
-        tk.Label(header, text=text, fg="#dddddd", bg="#2a2a2a", font=("Arial", 10, "bold"), anchor="w", width=width).pack(side=tk.LEFT, padx=5)
+        tk.Label(
+            header,
+            text=text,
+            fg=COLORS["text"],
+            bg=COLORS["panel_2"],
+            font=("Arial", 10, "bold"),
+            anchor="w",
+            width=width
+        ).pack(side=tk.LEFT, padx=5)
+
+
+def collect_service_snapshot(services, filter_text):
+    rows = []
+    active = 0
+    inactive = 0
+    failed = 0
+
+    for index, item in enumerate(services):
+        name = item.get("name", "Unbenannt")
+        service = item.get("service", "")
+        path = item.get("path", "")
+        url = item.get("url", "")
+
+        status = get_status(service)
+        enabled = get_enabled_status(service)
+        uptime = get_uptime(service) if status == "active" else "-"
+
+        if status == "active":
+            active += 1
+        elif status == "failed":
+            failed += 1
+        else:
+            inactive += 1
+
+        if filter_text and filter_text not in name.lower() and filter_text not in service.lower():
+            continue
+
+        rows.append({
+            "index": index,
+            "name": name,
+            "service": service,
+            "path": path,
+            "url": url,
+            "status": status,
+            "enabled": enabled,
+            "uptime": uptime,
+        })
+
+    summary = f"{len(services)} Services · {active} aktiv · {inactive} inaktiv · {failed} failed"
+    return rows, summary
+
+
+def render_service_snapshot(rows, summary, generation):
+    if generation != refresh_generation:
+        return
+
+    for widget in service_frame.winfo_children():
+        widget.destroy()
+
+    add_header()
+
+    if service_count_label:
+        service_count_label.config(text=summary)
+
+    for item in rows:
+        index = item["index"]
+        name = item["name"]
+        service = item["service"]
+        path = item["path"]
+        url = item["url"]
+        status = item["status"]
+        enabled = item["enabled"]
+        uptime = item["uptime"]
+
+        status_color = "#888888"
+        row_bg = COLORS["panel"]
+
+        if status == "active":
+            status_color = COLORS["success"]
+            row_bg = COLORS["row_active"]
+        elif status == "inactive":
+            status_color = COLORS["danger"]
+            row_bg = COLORS["row_inactive"]
+        elif status == "failed":
+            status_color = COLORS["warning"]
+            row_bg = COLORS["row_failed"]
+
+        enabled_color = "#888888"
+        enabled_text = enabled
+
+        if enabled == "enabled":
+            enabled_color = COLORS["success"]
+            enabled_text = "an"
+        elif enabled == "disabled":
+            enabled_color = COLORS["danger"]
+            enabled_text = "aus"
+
+        row = tk.Frame(service_frame, bg=row_bg)
+        row.pack(fill=tk.X, padx=12, pady=6)
+        row.bind("<Double-Button-1>", lambda e, i=index: edit_service_by_index(i))
+
+        status_icon = "▲" if status == "failed" else "●"
+
+        tk.Label(
+            row,
+            text=f"{status_icon}  {name}",
+            fg=status_color,
+            bg=row_bg,
+            font=("Arial", 13, "bold"),
+            anchor="w",
+            width=20
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Label(row, text=status, fg=status_color, bg=row_bg, font=("Arial", 11, "bold"), anchor="w", width=10).pack(side=tk.LEFT, padx=5)
+        tk.Label(row, text=enabled_text, fg=enabled_color, bg=row_bg, font=("Arial", 11, "bold"), anchor="w", width=11).pack(side=tk.LEFT, padx=5)
+        tk.Label(row, text=uptime, fg=uptime_color(uptime), bg=row_bg, font=("Arial", 11, "bold"), anchor="w", width=8).pack(side=tk.LEFT, padx=5)
+
+        create_button(row, text="Start", width=7, variant="success", command=lambda s=service: control_service("start", s)).pack(side=tk.LEFT, padx=2)
+        create_button(row, text="Stop", width=7, variant="danger", command=lambda s=service: control_service("stop", s)).pack(side=tk.LEFT, padx=2)
+        create_button(row, text="Restart", width=8, variant="warning", command=lambda s=service: control_service("restart", s)).pack(side=tk.LEFT, padx=2)
+        create_button(row, text="Logs", width=7, variant="accent", command=lambda s=service: show_logs(s)).pack(side=tk.LEFT, padx=2)
+        create_button(row, text="Auto an", width=8, variant="success", command=lambda s=service: control_autostart("enable", s)).pack(side=tk.LEFT, padx=2)
+        create_button(row, text="Auto aus", width=8, variant="danger", command=lambda s=service: control_autostart("disable", s)).pack(side=tk.LEFT, padx=2)
+
+        if url:
+            create_button(row, text="URL", width=7, variant="accent", command=lambda u=url: open_url(u)).pack(side=tk.LEFT, padx=2)
+
+        if path:
+            create_button(row, text="Ordner", width=7, variant="muted", command=lambda p=path: open_folder(p)).pack(side=tk.LEFT, padx=2)
+            create_button(row, text="Code", width=7, variant="accent", command=lambda p=path: open_code(p)).pack(side=tk.LEFT, padx=2)
 
 
 def refresh_services():
-    """Rebuild the service table from the current configuration and system state."""
-    try:
-        for widget in service_frame.winfo_children():
-            widget.destroy()
+    global refresh_generation, refresh_running, refresh_pending
 
-        add_header()
+    try:
+        if refresh_running:
+            refresh_pending = True
+            return
+
+        refresh_running = True
+        refresh_generation += 1
+        generation = refresh_generation
         services = load_services()
         filter_text = search_var.get().lower() if search_var else ""
 
-        for index, item in enumerate(services):
-            name = item.get("name", "Unbenannt")
-            service = item.get("service", "")
-            path = item.get("path", "")
-            url = item.get("url", "")
+        if service_count_label:
+            service_count_label.config(text="Services werden geprüft...")
 
-            if filter_text and filter_text not in name.lower() and filter_text not in service.lower():
-                continue
+        for widget in service_frame.winfo_children():
+            widget.destroy()
+        add_header()
 
-            status = get_status(service)
-            enabled = get_enabled_status(service)
-            uptime = get_uptime(service) if status == "active" else "-"
+        def task():
+            return collect_service_snapshot(services, filter_text)
 
-            # Use row color as a quick visual signal for the service state.
-            status_color = "#888888"
-            row_bg = "#1e1e1e"
+        def done(result):
+            global refresh_running, refresh_pending
 
-            if status == "active":
-                status_color = "#25c26e"
-                row_bg = "#1f2a24"
-            elif status == "inactive":
-                status_color = "#e04f5f"
-                row_bg = "#2a1f22"
-            elif status == "failed":
-                status_color = "#ffaa33"
-                row_bg = "#2a261f"
+            if isinstance(result, Exception):
+                report_runtime_error("refresh", "Aktualisieren fehlgeschlagen", str(result))
+            else:
+                rows, summary = result
+                render_service_snapshot(rows, summary, generation)
 
-            enabled_color = "#888888"
-            enabled_text = enabled
+            refresh_running = False
+            if refresh_pending:
+                refresh_pending = False
+                refresh_services()
 
-            if enabled == "enabled":
-                enabled_color = "#25c26e"
-                enabled_text = "an"
-            elif enabled == "disabled":
-                enabled_color = "#e04f5f"
-                enabled_text = "aus"
+        run_background(task, done)
 
-            row = tk.Frame(service_frame, bg=row_bg)
-            row.pack(fill=tk.X, padx=12, pady=6)
-            row.bind("<Double-Button-1>", lambda e, i=index: edit_service_by_index(i))
-
-            tk.Label(row, text=f"●  {name}", fg=status_color, bg=row_bg, font=("Arial", 13, "bold"), anchor="w", width=20).pack(side=tk.LEFT, padx=5)
-            tk.Label(row, text=status, fg="#cccccc", bg=row_bg, font=("Arial", 11), anchor="w", width=10).pack(side=tk.LEFT, padx=5)
-            tk.Label(row, text=enabled_text, fg=enabled_color, bg=row_bg, font=("Arial", 11, "bold"), anchor="w", width=11).pack(side=tk.LEFT, padx=5)
-            tk.Label(row, text=uptime, fg="#cccccc", bg=row_bg, font=("Arial", 11), anchor="w", width=8).pack(side=tk.LEFT, padx=5)
-
-            tk.Button(row, text="Start", width=7, command=lambda s=service: control_service("start", s)).pack(side=tk.LEFT, padx=2)
-            tk.Button(row, text="Stop", width=7, command=lambda s=service: control_service("stop", s)).pack(side=tk.LEFT, padx=2)
-            tk.Button(row, text="Restart", width=8, command=lambda s=service: control_service("restart", s)).pack(side=tk.LEFT, padx=2)
-            tk.Button(row, text="Logs", width=7, command=lambda s=service: show_logs(s)).pack(side=tk.LEFT, padx=2)
-            tk.Button(row, text="Auto an", width=8, command=lambda s=service: control_autostart("enable", s)).pack(side=tk.LEFT, padx=2)
-            tk.Button(row, text="Auto aus", width=8, command=lambda s=service: control_autostart("disable", s)).pack(side=tk.LEFT, padx=2)
-
-            if url:
-                tk.Button(row, text="URL", width=7, command=lambda u=url: open_url(u)).pack(side=tk.LEFT, padx=2)
-
-            if path:
-                tk.Button(row, text="Ordner", width=7, command=lambda p=path: open_folder(p)).pack(side=tk.LEFT, padx=2)
-                tk.Button(row, text="Code", width=7, command=lambda p=path: open_code(p)).pack(side=tk.LEFT, padx=2)
     except Exception as e:
+        refresh_running = False
         report_runtime_error("refresh", "Aktualisieren fehlgeschlagen", str(e))
 
 
 def auto_refresh_services():
-    """Refresh service rows regularly while keeping the timer alive after errors."""
     try:
         refresh_services()
     finally:
@@ -697,14 +1559,15 @@ def auto_refresh_services():
 
 
 def update_system_info():
-    """Refresh dashboard metrics and reschedule itself."""
     try:
         cpu_value.config(text=get_cpu_usage())
         ram_value.config(text=get_ram_usage())
         temp_value.config(text=get_temperature())
         disk_value.config(text=get_disk_free())
+
     except Exception as e:
         report_runtime_error("system_info", "Systeminfo Fehler", str(e))
+
     finally:
         try:
             root.after(3000, update_system_info)
@@ -714,36 +1577,124 @@ def update_system_info():
 
 root = tk.Tk()
 root.title("PythonXP Service Control")
-root.geometry("1420x700")
-root.configure(bg="#121212")
+root.geometry("1280x720")
+root.minsize(1100, 650)
+root.configure(bg=COLORS["bg"])
 
-info_frame = tk.Frame(root, bg="#121212")
-info_frame.pack(fill=tk.X, padx=20, pady=12)
+# Start maximized where the window manager supports it.
+try:
+    root.state("zoomed")
+except tk.TclError:
+    try:
+        root.attributes("-zoomed", True)
+    except tk.TclError:
+        pass
 
-cpu_value = create_info_card(info_frame, "CPU", "0.0%", "#25c26e")
-ram_value = create_info_card(info_frame, "RAM", "0.0%", "#4ea3ff")
-temp_value = create_info_card(info_frame, "TEMP", "N/A", "#ffaa33")
-disk_value = create_info_card(info_frame, "SSD FREI", "N/A", "#dddddd")
+# Compact top area: system cards on the left, branding/search on the right.
+top_frame = tk.Frame(root, bg=COLORS["bg"])
+top_frame.pack(fill=tk.X, padx=20, pady=(10, 4))
 
-title = tk.Label(root, text="PythonXP Service Control", fg="#ffffff", bg="#121212", font=("Arial", 24, "bold"))
-title.pack(pady=8)
+info_frame = tk.Frame(top_frame, bg=COLORS["bg"])
+info_frame.pack(side=tk.LEFT, anchor="n")
+
+cpu_value = create_info_card(info_frame, "CPU", "0.0%", COLORS["success"])
+ram_value = create_info_card(info_frame, "RAM", "0.0%", COLORS["accent_2"])
+temp_value = create_info_card(info_frame, "TEMP", "N/A", COLORS["warning"])
+disk_value = create_info_card(info_frame, "SSD FREI", "N/A", COLORS["text"])
+
+header_frame = tk.Frame(top_frame, bg=COLORS["bg"])
+header_frame.pack(side=tk.LEFT, padx=(36, 0), anchor="n")
+
+load_logo(header_frame)
+
+title_box = tk.Frame(header_frame, bg=COLORS["bg"])
+title_box.pack(side=tk.LEFT, anchor="n")
+
+tk.Label(
+    title_box,
+    text="PythonXP Service Control",
+    fg=COLORS["text"],
+    bg=COLORS["bg"],
+    font=FONT_TITLE
+).pack(anchor="w")
+
+meta_row = tk.Frame(title_box, bg=COLORS["bg"])
+meta_row.pack(anchor="w", pady=(2, 0))
+
+tk.Label(
+    meta_row,
+    text=f"Version {APP_VERSION}",
+    fg=COLORS["muted"],
+    bg=COLORS["bg"],
+    font=("Arial", 10)
+).pack(side=tk.LEFT)
+
+service_count_label = tk.Label(
+    meta_row,
+    text="Services werden geladen...",
+    fg=COLORS["accent"],
+    bg=COLORS["bg"],
+    font=("Arial", 10, "bold")
+)
+service_count_label.pack(side=tk.LEFT, padx=(14, 0))
 
 search_var = tk.StringVar()
-search_entry = tk.Entry(root, textvariable=search_var, width=45)
-search_entry.pack(pady=5)
+
+search_frame = tk.Frame(title_box, bg=COLORS["bg"])
+search_frame.pack(anchor="w", pady=(12, 0))
+
+tk.Label(
+    search_frame,
+    text="Service suchen",
+    fg=COLORS["muted"],
+    bg=COLORS["bg"],
+    font=("Arial", 10, "bold")
+).pack(anchor="w")
+
+search_entry = create_entry(search_frame, textvariable=search_var, width=45)
+search_entry.pack(pady=(3, 0))
 search_entry.insert(0, "")
 search_entry.bind("<KeyRelease>", lambda e: refresh_services())
 
-service_frame = tk.Frame(root, bg="#1e1e1e")
-service_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+service_frame = tk.Frame(root, bg=COLORS["panel"], highlightthickness=1, highlightbackground=COLORS["border"])
+service_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(4, 8))
 
-button_frame = tk.Frame(root, bg="#121212")
-button_frame.pack(pady=12)
+bottom_frame = tk.Frame(root, bg=COLORS["bg"])
+bottom_frame.pack(fill=tk.X, padx=20, pady=(0, 8))
 
-tk.Button(button_frame, text="Aktualisieren", width=16, command=refresh_services).pack(side=tk.LEFT, padx=5)
-tk.Button(button_frame, text="+ Service", width=14, command=add_project_window).pack(side=tk.LEFT, padx=5)
-tk.Button(button_frame, text="Bearbeiten", width=14, command=edit_project_window).pack(side=tk.LEFT, padx=5)
-tk.Button(button_frame, text="- Service", width=14, command=delete_project_window).pack(side=tk.LEFT, padx=5)
+button_frame = tk.Frame(bottom_frame, bg=COLORS["bg"])
+button_frame.pack(side=tk.TOP)
+
+create_button(button_frame, text="Aktualisieren", width=16, command=refresh_services).pack(side=tk.LEFT, padx=5)
+create_button(button_frame, text="+ Service", width=14, command=add_project_window).pack(side=tk.LEFT, padx=5)
+create_button(button_frame, text="+ Assistent", width=14, command=service_assistant_window, variant="accent").pack(side=tk.LEFT, padx=5)
+create_button(button_frame, text="Bearbeiten", width=14, command=edit_project_window).pack(side=tk.LEFT, padx=5)
+create_button(button_frame, text="- Service", width=14, command=delete_project_window).pack(side=tk.LEFT, padx=5)
+
+footer_frame = tk.Frame(bottom_frame, bg=COLORS["bg"])
+footer_frame.pack(side=tk.TOP, pady=(7, 0))
+
+tk.Label(
+    footer_frame,
+    text=f"PythonXP Service Control {APP_VERSION}  ·  ",
+    fg=COLORS["muted"],
+    bg=COLORS["bg"],
+    font=("Arial", 9)
+).pack(side=tk.LEFT)
+
+create_link_label(
+    footer_frame,
+    "GitHub",
+    lambda: open_external_link(GITHUB_URL)
+).pack(side=tk.LEFT, padx=4)
+
+tk.Label(footer_frame, text=" · ", fg=COLORS["muted"], bg=COLORS["bg"], font=("Arial", 9)).pack(side=tk.LEFT)
+
+create_link_label(
+    footer_frame,
+    "Patreon",
+    lambda: open_external_link(PATREON_URL)
+).pack(side=tk.LEFT, padx=4)
 
 refresh_services()
 update_system_info()
