@@ -16,11 +16,5 @@
         "service": "code-server.service",
         "path": "",
         "url": "http://127.0.0.1:8080"
-    },
-    {
-        "name": "Einkaufsliste",
-        "service": "einkaufsliste.service",
-        "path": "/home/pi/Einkaufsliste",
-        "url": "http://127.0.0.1:5050"
     }
 ]

@@ -8,20 +8,36 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
-# Keep all project-local state next to the script so the CLI and GUI share the
-# same service list without requiring installation paths or environment setup.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, "services.json")
 COMMAND_TIMEOUT = 10
 
-# Accept only systemd unit filenames. This prevents user input from becoming
-# extra command-line flags when passed to systemctl.
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
 USER_NAME_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_.-]*[$]?|[0-9]+)$")
 RESTART_POLICIES = {"no", "always", "on-success", "on-failure", "on-abnormal", "on-abort", "on-watchdog"}
+DIAGNOSTIC_COMMANDS = [
+    ("hostname -I", ["hostname", "-I"], False),
+    ("uptime -p", ["uptime", "-p"], False),
+    ("who -b", ["who", "-b"], False),
+    ("systemctl is-active ssh.service", ["systemctl", "is-active", "ssh.service"], False),
+    ("systemctl is-enabled ssh.service", ["systemctl", "is-enabled", "ssh.service"], False),
+    ("systemctl is-active zerotier-one.service", ["systemctl", "is-active", "zerotier-one.service"], False),
+    ("systemctl is-active realvnc-vnc-server.service", ["systemctl", "is-active", "realvnc-vnc-server.service"], False),
+    ("systemctl is-active vncserver-x11-serviced.service", ["systemctl", "is-active", "vncserver-x11-serviced.service"], False),
+    ("systemctl is-active wayvnc.service", ["systemctl", "is-active", "wayvnc.service"], False),
+    ("ss -tulpn | grep -E ':22|:5900|:5901|:9993'", "ss -tulpn | grep -E ':22|:5900|:5901|:9993'", True),
+    ("ip -br addr", ["ip", "-br", "addr"], False),
+    ("systemctl --failed --no-pager", ["systemctl", "--failed", "--no-pager"], False),
+    ("journalctl -u ssh.service -n 40 --no-pager", ["journalctl", "-u", "ssh.service", "-n", "40", "--no-pager"], False),
+]
+VNC_SERVICES = [
+    "realvnc-vnc-server.service",
+    "vncserver-x11-serviced.service",
+    "wayvnc.service",
+]
 
 APP_NAME = "PythonXP Service Manager CLI"
-APP_VERSION = "v0.8.1-cli"
+APP_VERSION = "v0.8.3-cli"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -42,11 +58,10 @@ def clear():
 
 
 def read_input(prompt_text, default=None):
-    """Read terminal input and handle closed SSH/stdin sessions gracefully."""
     try:
         value = input(prompt_text).strip()
     except EOFError:
-        print(c("\nEingabe abgebrochen: Terminal-Eingabe ist nicht verfügbar.", RED))
+        print(c("\nInput cancelled: terminal input is not available.", RED))
         return None
 
     if value == "" and default is not None:
@@ -56,25 +71,43 @@ def read_input(prompt_text, default=None):
 
 def pause():
     try:
-        input(f"\n{DIM}Enter drücken zum Fortfahren...{RESET}")
+        input(f"\n{DIM}Press Enter to continue...{RESET}")
     except EOFError:
         pass
 
 
 def run_cmd(cmd, timeout=COMMAND_TIMEOUT):
-    """Run a bounded external command and return a uniform result tuple."""
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except subprocess.TimeoutExpired:
-        return 124, "", f"Befehl nach {timeout}s abgebrochen: {' '.join(cmd)}"
+        return 124, "", f"Command timed out after {timeout}s: {' '.join(cmd)}"
     except OSError as e:
         return 1, "", str(e)
 
 
 def sudo_cmd(cmd, timeout=30):
-    """Prefix privileged system commands with sudo in one controlled place."""
     return run_cmd(["sudo"] + cmd, timeout=timeout)
+
+
+def run_diagnostic_command(command, use_shell=False, timeout=20):
+    try:
+        result = subprocess.run(
+            command,
+            shell=use_shell,
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+        if error:
+            output = f"{output}\n{error}".strip()
+        return result.returncode, output
+    except subprocess.TimeoutExpired:
+        return 124, f"Command timed out after {timeout}s"
+    except OSError as e:
+        return 1, str(e)
 
 
 def valid_service_name(service):
@@ -100,36 +133,33 @@ def valid_url(url):
 
 
 def normalize_path(path):
-    """Convert optional user paths into absolute filesystem paths."""
     if not path:
         return ""
     return os.path.abspath(os.path.expanduser(path.strip()))
 
 
 def load_services():
-    """Load the shared service list while tolerating malformed entries."""
     if not os.path.exists(CONFIG_FILE):
         return []
+
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
     except json.JSONDecodeError as e:
-        print(c(f"services.json enthält ungültiges JSON: {e}", RED))
+        print(c(f"services.json contains invalid JSON: {e}", RED))
         return []
     except OSError as e:
-        print(c(f"services.json konnte nicht gelesen werden: {e}", RED))
+        print(c(f"services.json could not be read: {e}", RED))
         return []
 
     if not isinstance(data, list):
-        print(c("services.json muss eine Liste sein.", RED))
+        print(c("services.json must contain a list.", RED))
         return []
 
     services = []
     for item in data:
         if not isinstance(item, dict):
             continue
-        # Normalize all values to strings so later display and validation code
-        # can stay simple even if the JSON was edited by hand.
         services.append({
             "name": str(item.get("name", "")).strip(),
             "service": str(item.get("service", "")).strip(),
@@ -140,9 +170,9 @@ def load_services():
 
 
 def save_services(services):
-    """Write services.json atomically to avoid half-written configuration files."""
     directory = os.path.dirname(CONFIG_FILE)
     tmp_path = None
+
     try:
         fd, tmp_path = tempfile.mkstemp(prefix=".services.", suffix=".json", dir=directory)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -156,38 +186,46 @@ def save_services(services):
                 os.unlink(tmp_path)
             except OSError:
                 pass
-        print(c(f"Speichern fehlgeschlagen: {e}", RED))
+        print(c(f"Save failed: {e}", RED))
         return False
 
 
 def get_status(service):
-    """Return the current systemd active state for one validated service."""
     if not valid_service_name(service):
         return "invalid"
-    code, out, _ = run_cmd(["systemctl", "is-active", service])
+    _, out, _ = run_cmd(["systemctl", "is-active", service])
     return out if out else "unknown"
 
 
 def get_enabled(service):
-    """Return whether systemd autostart is enabled for one service."""
     if not valid_service_name(service):
         return "invalid"
-    code, out, _ = run_cmd(["systemctl", "is-enabled", service])
+    _, out, _ = run_cmd(["systemctl", "is-enabled", service])
     return out if out else "unknown"
 
 
 def get_uptime(service):
-    """Return a compact uptime value for active services only."""
     if not valid_service_name(service) or get_status(service) != "active":
         return "-"
-    _, out, _ = run_cmd(["systemctl", "show", service, "--property=ActiveEnterTimestamp", "--value"])
+
+    _, out, _ = run_cmd([
+        "systemctl",
+        "show",
+        service,
+        "--property=ActiveEnterTimestamp",
+        "--value"
+    ])
+
     if not out:
         return "-"
-    code, ts, _ = run_cmd(["date", "-d", out, "+%s"])
+
+    _, ts, _ = run_cmd(["date", "-d", out, "+%s"])
+
     try:
         diff = int(time.time()) - int(ts)
     except (TypeError, ValueError):
         return "-"
+
     if diff < 60:
         return f"{diff}s"
     if diff < 3600:
@@ -209,64 +247,71 @@ def status_color(status):
 
 def enabled_text(enabled):
     if enabled == "enabled":
-        return c("an", GREEN)
+        return c("on", GREEN)
     if enabled == "disabled":
-        return c("aus", RED)
+        return c("off", RED)
     return c(enabled, GRAY)
 
 
 def print_header():
-    print(c("╔" + "═" * 54 + "╗", CYAN))
-    print(c(f"║ {APP_NAME:<52} ║", CYAN))
-    print(c(f"║ {APP_VERSION:<52} ║", CYAN))
-    print(c("╚" + "═" * 54 + "╝", CYAN))
+    width = 62
+    print(c("+" + "-" * width + "+", CYAN))
+    print(c(f"| {APP_NAME:<60} |", CYAN))
+    print(c(f"| {APP_VERSION:<60} |", CYAN))
+    print(c("+" + "-" * width + "+", CYAN))
 
 
 def list_services(filter_text=""):
-    """Render the service overview and return the currently visible entries."""
     services = load_services()
     filter_text = filter_text.lower().strip()
 
     if filter_text:
-        services_to_show = [s for s in services if filter_text in s["name"].lower() or filter_text in s["service"].lower()]
+        services_to_show = [
+            s for s in services
+            if filter_text in s["name"].lower() or filter_text in s["service"].lower()
+        ]
     else:
         services_to_show = services
 
     print(f"\n{BOLD}{'#':<3} {'Status':<10} {'Autostart':<12} {'Uptime':<8} {'Name':<22} Service{RESET}")
-    print("─" * 90)
+    print("-" * 90)
 
     for i, item in enumerate(services_to_show, start=1):
         service = item["service"]
         status = get_status(service)
         enabled = get_enabled(service)
         uptime = get_uptime(service)
-        dot = "●"
+        marker = "o"
+
         print(
             f"{i:<3} "
-            f"{c(dot, status_color(status))} {c(f'{status:<8}', status_color(status))} "
+            f"{c(marker, status_color(status))} {c(f'{status:<8}', status_color(status))} "
             f"{enabled_text(enabled):<21} "
             f"{uptime:<8} "
             f"{item['name']:<22} "
             f"{service}"
         )
 
-    print("─" * 90)
+    print("-" * 90)
     return services_to_show
 
 
-def choose_service(prompt="Service wählen", allow_filter=True):
-    """Let the user pick from the filtered service list without losing context."""
+def choose_service(prompt="Select service", allow_filter=True):
     filter_text = ""
+
     while True:
         clear()
         print_header()
         shown = list_services(filter_text)
+
         if allow_filter:
-            print(f"\n{DIM}Filter aktiv: {filter_text or '-'}{RESET}")
-            print("Zahl wählen, /suchtext zum Filtern, Enter für Filter löschen, q zurück")
+            print(f"\n{DIM}Active filter: {filter_text or '-'}{RESET}")
+            print("Choose number, /search to filter, Enter to clear filter, q back")
         else:
-            print("Zahl wählen oder q zurück")
+            print("Choose number or q back")
+
         choice = read_input(f"\n{prompt}: ")
+
         if choice is None:
             return None
         if choice.lower() == "q":
@@ -281,55 +326,65 @@ def choose_service(prompt="Service wählen", allow_filter=True):
             idx = int(choice) - 1
             if 0 <= idx < len(shown):
                 return shown[idx]
-        print(c("Ungültige Auswahl.", RED))
+
+        print(c("Invalid selection.", RED))
         time.sleep(0.8)
 
 
 def control_service(action):
-    """Run a start/stop/restart/enable/disable action for a selected service."""
-    item = choose_service(f"Service für '{action}'")
+    item = choose_service(f"Service for '{action}'")
     if not item:
         return
+
     service = item["service"]
-    print(f"\nFühre aus: sudo systemctl {action} {service}")
+    print(f"\nRunning: sudo systemctl {action} {service}")
+
     code, out, err = sudo_cmd(["systemctl", action, service], timeout=30)
+
     if code == 0:
         print(c("OK", GREEN))
     else:
-        print(c(err or out or "Fehlgeschlagen", RED))
+        print(c(err or out or "Failed", RED))
+
     pause()
 
 
 def show_logs():
-    item = choose_service("Logs für Service")
+    item = choose_service("Logs for service")
     if not item:
         return
+
     service = item["service"]
     print(f"\nLogs: {service}\n")
+
     code, out, err = run_cmd(["journalctl", "-u", service, "-n", "120", "--no-pager"], timeout=20)
+
     if out:
         print(out)
     if code != 0:
-        print(c(err or "Logs konnten nicht gelesen werden.", RED))
+        print(c(err or "Could not read logs.", RED))
+
     pause()
 
 
 def add_service_manual():
-    """Add an existing systemd service to the shared panel list."""
     clear()
     print_header()
-    print(c("Service manuell zur Panel-Liste hinzufügen", BOLD))
-    print(c("Hinweis: Die echte .service-Datei muss bereits existieren. Für neue Services den Assistenten nutzen.\n", DIM))
+    print(c("Add existing service to panel list", BOLD))
+    print(c("Note: The real .service file must already exist. Use assistant for new services.\n", DIM))
 
-    name = read_input("Anzeigename: ")
+    name = read_input("Display name: ")
     if name is None:
         return
-    service_input = read_input("Systemd Service, z.B. ssh.service: ")
+
+    service_input = read_input("Systemd service, example ssh.service: ")
     if service_input is None:
         return
-    path_input = read_input("Ordner optional: ")
+
+    path_input = read_input("Folder optional: ")
     if path_input is None:
         return
+
     url = read_input("URL optional: ")
     if url is None:
         return
@@ -338,73 +393,107 @@ def add_service_manual():
     path = normalize_path(path_input)
 
     if not name or not valid_service_name(service):
-        print(c("Name fehlt oder Service-Name ungültig.", RED))
+        print(c("Missing name or invalid service name.", RED))
         pause()
         return
+
     if url and not valid_url(url):
-        print(c("URL muss mit http:// oder https:// beginnen.", RED))
+        print(c("URL must start with http:// or https://.", RED))
         pause()
         return
 
     services = load_services()
-    services.append({"name": name, "service": service, "path": path, "url": url})
+
+    if any(s["service"] == service for s in services):
+        print(c("This service is already in the panel list.", YELLOW))
+        pause()
+        return
+
+    services.append({
+        "name": name,
+        "service": service,
+        "path": path,
+        "url": url
+    })
+
     if save_services(services):
-        print(c("Service wurde zur Liste hinzugefügt.", GREEN))
+        print(c("Service added to panel list.", GREEN))
+
     pause()
 
 
 def remove_service_from_list():
-    """Remove an entry from services.json without touching the real unit file."""
-    item = choose_service("Aus Panel-Liste entfernen")
+    item = choose_service("Remove from panel list")
     if not item:
         return
-    confirm = read_input(f"\n{item['name']} wirklich nur aus der Liste entfernen? [j/N]: ", default="n")
+
+    confirm = read_input(f"\nRemove {item['name']} only from panel list? [y/N]: ", default="n")
     if confirm is None:
         return
-    confirm = confirm.lower()
-    if confirm != "j":
+
+    if confirm.lower() != "y":
         return
+
     services = load_services()
-    services = [s for s in services if not (s["service"] == item["service"] and s["name"] == item["name"])]
+    services = [
+        s for s in services
+        if not (s["service"] == item["service"] and s["name"] == item["name"])
+    ]
+
     if save_services(services):
-        print(c("Aus Liste entfernt. Die echte systemd-Datei bleibt erhalten.", GREEN))
+        print(c("Removed from list. The real systemd file remains unchanged.", GREEN))
+
     pause()
 
 
 def browse_system_services():
-    """Show installed service unit names to help users fill the config correctly."""
     clear()
     print_header()
-    query = read_input("Suchtext für installierte systemd Services: ", default="")
+
+    query = read_input("Search text for installed systemd services: ", default="")
     if query is None:
         return
+
     query = query.lower()
-    code, out, err = run_cmd(["systemctl", "list-unit-files", "--type=service", "--no-legend"], timeout=20)
+
+    code, out, err = run_cmd(
+        ["systemctl", "list-unit-files", "--type=service", "--no-legend"],
+        timeout=20
+    )
+
     if code != 0 and not out:
-        print(c(err or "Services konnten nicht gelesen werden.", RED))
+        print(c(err or "Could not read services.", RED))
         pause()
         return
+
     units = sorted(line.split()[0] for line in out.splitlines() if line.strip())
+
     if query:
         units = [u for u in units if query in u.lower()]
-    print("\n".join(units[:200]))
+
+    print()
+
+    for unit in units[:200]:
+        print(unit)
+
     if len(units) > 200:
-        print(c(f"... {len(units) - 200} weitere Treffer", DIM))
+        print(c(f"... {len(units) - 200} more matches", DIM))
+
     pause()
 
 
 def slugify_service_name(name):
-    """Create a safe default unit filename from a human-readable project name."""
     slug = name.lower().strip()
     slug = re.sub(r"[^a-z0-9_.@:-]+", "-", slug)
     slug = slug.strip("-._:")
+
     if not slug:
         slug = "pythonxp-service"
+
     return normalize_service_name(slug)
 
 
 def make_unit_content(description, user, working_dir, exec_start, restart):
-    """Build the systemd unit file used by the interactive service assistant."""
     return f"""[Unit]
 Description={description}
 After=network.target
@@ -423,88 +512,114 @@ WantedBy=multi-user.target
 
 
 def service_assistant():
-    """Create a simple Python systemd service and optionally add it to the panel."""
     clear()
     print_header()
-    print(c("+ Service Assistent", BOLD))
-    print("Erstellt eine echte systemd-Service-Datei und trägt sie ins Panel ein.\n")
+    print(c("+ Service Assistant", BOLD))
+    print("Creates a real systemd service file and adds it to the panel.\n")
 
-    project_name = read_input("Projektname / Anzeigename: ")
+    project_name = read_input("Project name / display name: ")
     if project_name is None:
         return
     if not project_name:
-        print(c("Projektname fehlt.", RED)); pause(); return
+        print(c("Project name missing.", RED))
+        pause()
+        return
 
-    project_dir_input = read_input("Projektordner, z.B. /home/pi/Einkaufsliste: ")
+    project_dir_input = read_input("Project folder, example /home/pi/Einkaufsliste: ")
     if project_dir_input is None:
         return
-    project_dir = normalize_path(project_dir_input)
-    if not project_dir or not os.path.isdir(project_dir):
-        print(c("Projektordner existiert nicht.", RED)); pause(); return
 
-    py_file = read_input("Python-Datei im Ordner, z.B. app.py [app.py]: ", default="app.py")
+    project_dir = normalize_path(project_dir_input)
+
+    if not project_dir or not os.path.isdir(project_dir):
+        print(c("Project folder does not exist.", RED))
+        pause()
+        return
+
+    py_file = read_input("Python file in folder [app.py]: ", default="app.py")
     if py_file is None:
         return
+
     if os.path.isabs(py_file):
         py_path = py_file
     else:
         py_path = os.path.join(project_dir, py_file)
-    if not os.path.isfile(py_path):
-        print(c(f"Python-Datei nicht gefunden: {py_path}", RED)); pause(); return
 
-    url = read_input("URL optional, z.B. http://127.0.0.1:5050: ", default="")
+    if not os.path.isfile(py_path):
+        print(c(f"Python file not found: {py_path}", RED))
+        pause()
+        return
+
+    url = read_input("URL optional, example http://127.0.0.1:5050: ", default="")
     if url is None:
         return
+
     if url and not valid_url(url):
-        print(c("URL ungültig. Muss mit http:// oder https:// beginnen.", RED)); pause(); return
+        print(c("Invalid URL. Must start with http:// or https://.", RED))
+        pause()
+        return
 
     default_service = slugify_service_name(project_name)
-    service_input = read_input(f"Service-Dateiname [{default_service}]: ", default=default_service)
+
+    service_input = read_input(f"Service filename [{default_service}]: ", default=default_service)
     if service_input is None:
         return
-    service = normalize_service_name(service_input)
-    if not valid_service_name(service):
-        print(c("Service-Name ungültig.", RED)); pause(); return
 
-    user = read_input("Linux-Benutzer [pi]: ", default="pi")
+    service = normalize_service_name(service_input)
+
+    if not valid_service_name(service):
+        print(c("Invalid service name.", RED))
+        pause()
+        return
+
+    user = read_input("Linux user [pi]: ", default="pi")
     if user is None:
         return
+
     if not valid_user_name(user):
-        print(c("Linux-Benutzer ungültig. Erlaubt sind normale Usernamen oder numerische UIDs.", RED)); pause(); return
-    restart = read_input("Restart-Verhalten [always]: ", default="always")
+        print(c("Invalid Linux user.", RED))
+        pause()
+        return
+
+    restart = read_input("Restart policy [always]: ", default="always")
     if restart is None:
         return
+
     restart = restart.lower()
+
     if restart not in RESTART_POLICIES:
-        print(c("Restart-Verhalten ungültig. Beispiel: always, on-failure oder no.", RED)); pause(); return
-    autostart_input = read_input("Autostart aktivieren? [J/n]: ", default="j")
+        print(c("Invalid restart policy. Example: always, on-failure or no.", RED))
+        pause()
+        return
+
+    autostart_input = read_input("Enable autostart? [Y/n]: ", default="y")
     if autostart_input is None:
         return
-    start_now_input = read_input("Direkt starten? [j/N]: ", default="n")
+
+    start_now_input = read_input("Start now? [y/N]: ", default="n")
     if start_now_input is None:
         return
-    autostart = autostart_input.lower() != "n"
-    start_now = start_now_input.lower() == "j"
 
-    # Quote only the script path here. systemd parses ExecStart itself and does
-    # not run a shell, so we avoid shell-specific command construction.
+    autostart = autostart_input.lower() != "n"
+    start_now = start_now_input.lower() == "y"
+
     exec_start = f"/usr/bin/python3 {shlex.quote(py_path)}"
     unit_content = make_unit_content(project_name, user, project_dir, exec_start, restart)
     unit_path = f"/etc/systemd/system/{service}"
 
     clear()
     print_header()
-    print(c("Folgende Service-Datei wird erstellt:", BOLD))
+    print(c("This service file will be created:", BOLD))
     print(c(unit_path, CYAN))
     print("\n" + unit_content)
-    confirm = read_input("Erstellen? [j/N]: ", default="n")
+
+    confirm = read_input("Create service? [y/N]: ", default="n")
     if confirm is None:
         return
-    confirm = confirm.lower()
-    if confirm != "j":
+
+    if confirm.lower() != "y":
         return
 
-    # Write through sudo tee because the target directory is owned by root.
     try:
         proc = subprocess.run(
             ["sudo", "tee", unit_path],
@@ -513,70 +628,133 @@ def service_assistant():
             capture_output=True,
             timeout=30,
         )
+
         if proc.returncode != 0:
-            print(c(proc.stderr.strip() or "Schreiben fehlgeschlagen.", RED)); pause(); return
+            print(c(proc.stderr.strip() or "Writing service file failed.", RED))
+            pause()
+            return
+
     except subprocess.TimeoutExpired:
-        print(c("Schreiben fehlgeschlagen: sudo tee hat zu lange gebraucht.", RED)); pause(); return
+        print(c("Writing failed: sudo tee timed out.", RED))
+        pause()
+        return
     except OSError as e:
-        print(c(str(e), RED)); pause(); return
+        print(c(str(e), RED))
+        pause()
+        return
 
     warnings = []
 
     code, out, err = sudo_cmd(["systemctl", "daemon-reload"], timeout=30)
     if code != 0:
-        print(c(err or out or "Fehler bei systemctl daemon-reload", RED)); pause(); return
+        print(c(err or out or "systemctl daemon-reload failed", RED))
+        pause()
+        return
 
     if autostart:
         code, out, err = sudo_cmd(["systemctl", "enable", service], timeout=30)
         if code != 0:
-            warnings.append(err or out or "Enable fehlgeschlagen.")
+            warnings.append(err or out or "Enable failed.")
 
     if start_now:
         code, out, err = sudo_cmd(["systemctl", "start", service], timeout=30)
         if code != 0:
-            warnings.append(err or out or "Start fehlgeschlagen.")
+            warnings.append(err or out or "Start failed.")
 
     services = load_services()
+
     if not any(s["service"] == service for s in services):
-        # The CLI and GUI both read services.json, so adding the new unit here
-        # makes it appear in both interfaces immediately.
-        services.append({"name": project_name, "service": service, "path": project_dir, "url": url})
+        services.append({
+            "name": project_name,
+            "service": service,
+            "path": project_dir,
+            "url": url
+        })
+
         if not save_services(services):
-            warnings.append("Service wurde erstellt, aber nicht in services.json gespeichert.")
+            warnings.append("Service was created but could not be saved to services.json.")
 
     if warnings:
-        print(c("\nService-Datei wurde erstellt, aber es gab Warnungen:", YELLOW))
+        print(c("\nService file was created, but warnings occurred:", YELLOW))
         for warning in warnings:
             print(c(f"- {warning}", YELLOW))
     else:
-        print(c("\nService wurde erstellt, aktiviert/eingetragen wie gewünscht.", GREEN))
+        print(c("\nService created successfully.", GREEN))
+
+    pause()
+
+
+def show_diagnostics():
+    clear()
+    print_header()
+    print(c("Diagnostics", BOLD))
+
+    for label, command, use_shell in DIAGNOSTIC_COMMANDS:
+        print(f"\n$ {label}")
+        code, output = run_diagnostic_command(command, use_shell=use_shell)
+        if output:
+            print(output)
+        else:
+            print("(no output)")
+        if code != 0:
+            print(c(f"[Exit {code}]", YELLOW))
+
+    pause()
+
+
+def service_unit_exists(service):
+    code, out, _ = run_cmd(["systemctl", "list-unit-files", service, "--no-legend"], timeout=10)
+    return code == 0 and bool(out.strip())
+
+
+def quick_fix_remote_services():
+    clear()
+    print_header()
+    print(c("Quick-Fix remote services", BOLD))
+
+    services = ["ssh.service", "zerotier-one.service"]
+    services.extend(service for service in VNC_SERVICES if service_unit_exists(service))
+
+    for service in services:
+        print(f"\nRunning: sudo systemctl restart {service}")
+        code, out, err = sudo_cmd(["systemctl", "restart", service], timeout=30)
+        if code == 0:
+            print(c("OK", GREEN))
+        else:
+            print(c(err or out or "Failed", RED))
+
     pause()
 
 
 def main_menu():
-    """Main command loop for the terminal interface."""
     while True:
         clear()
         print_header()
         list_services()
-        print(f"\n{BOLD}Aktionen:{RESET}")
-        print("1  Aktualisieren / Services anzeigen")
-        print("2  Service starten")
-        print("3  Service stoppen")
-        print("4  Service neustarten")
-        print("5  Autostart aktivieren")
-        print("6  Autostart deaktivieren")
-        print("7  Logs anzeigen")
-        print("8  Service manuell zur Liste hinzufügen")
-        print("9  Service aus Liste entfernen")
-        print("10 Installierte Services durchsuchen")
-        print("11 + Service Assistent")
-        print("q  Beenden")
 
-        choice = read_input("\nAuswahl: ")
+        print(f"\n{BOLD}Actions:{RESET}")
+        print("1  Refresh / show services")
+        print("2  Start service")
+        print("3  Stop service")
+        print("4  Restart service")
+        print("5  Enable autostart")
+        print("6  Disable autostart")
+        print("7  Show logs")
+        print("8  Add existing service to list")
+        print("9  Remove service from list")
+        print("10 Browse installed services")
+        print("11 + Service Assistant")
+        print("12 Diagnose anzeigen")
+        print("13 Quick-Fix Remote-Dienste")
+        print("q  Quit")
+
+        choice = read_input("\nSelection: ")
+
         if choice is None:
             break
+
         choice = choice.lower()
+
         if choice in {"q", "quit", "exit"}:
             break
         if choice == "1":
@@ -601,8 +779,12 @@ def main_menu():
             browse_system_services()
         elif choice == "11":
             service_assistant()
+        elif choice == "12":
+            show_diagnostics()
+        elif choice == "13":
+            quick_fix_remote_services()
         else:
-            print(c("Ungültige Auswahl.", RED))
+            print(c("Invalid selection.", RED))
             time.sleep(0.8)
 
 
@@ -610,4 +792,4 @@ if __name__ == "__main__":
     try:
         main_menu()
     except KeyboardInterrupt:
-        print("\nBeendet.")
+        print("\nExited.")

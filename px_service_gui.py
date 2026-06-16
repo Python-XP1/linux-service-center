@@ -57,13 +57,41 @@ LOGO_CANDIDATES = [
     os.path.join(BASE_DIR, "logo.png"),
 ]
 
-APP_VERSION = "v0.8.1"
+APP_VERSION = "v0.8.3"
 GITHUB_URL = "https://github.com/Python-XP1"
 PATREON_URL = "https://www.patreon.com/PythonXP"
 
 COMMAND_TIMEOUT = 10
 
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
+USER_NAME_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_.-]*[$]?|[0-9]+)$")
+PROTECTED_SERVICES = {
+    "ssh.service": "SSH",
+    "zerotier-one.service": "ZeroTier",
+    "realvnc-vnc-server.service": "RealVNC",
+    "vncserver-x11-serviced.service": "RealVNC",
+    "wayvnc.service": "WayVNC",
+}
+DIAGNOSTIC_COMMANDS = [
+    ("hostname -I", ["hostname", "-I"], False),
+    ("uptime -p", ["uptime", "-p"], False),
+    ("who -b", ["who", "-b"], False),
+    ("systemctl is-active ssh.service", ["systemctl", "is-active", "ssh.service"], False),
+    ("systemctl is-enabled ssh.service", ["systemctl", "is-enabled", "ssh.service"], False),
+    ("systemctl is-active zerotier-one.service", ["systemctl", "is-active", "zerotier-one.service"], False),
+    ("systemctl is-active realvnc-vnc-server.service", ["systemctl", "is-active", "realvnc-vnc-server.service"], False),
+    ("systemctl is-active vncserver-x11-serviced.service", ["systemctl", "is-active", "vncserver-x11-serviced.service"], False),
+    ("systemctl is-active wayvnc.service", ["systemctl", "is-active", "wayvnc.service"], False),
+    ("ss -tulpn | grep -E ':22|:5900|:5901|:9993'", "ss -tulpn | grep -E ':22|:5900|:5901|:9993'", True),
+    ("ip -br addr", ["ip", "-br", "addr"], False),
+    ("systemctl --failed --no-pager", ["systemctl", "--failed", "--no-pager"], False),
+    ("journalctl -u ssh.service -n 40 --no-pager", ["journalctl", "-u", "ssh.service", "-n", "40", "--no-pager"], False),
+]
+VNC_SERVICES = [
+    "realvnc-vnc-server.service",
+    "vncserver-x11-serviced.service",
+    "wayvnc.service",
+]
 
 search_var = None
 service_count_label = None
@@ -320,6 +348,10 @@ def is_valid_service_name(service):
     return bool(service and SERVICE_NAME_RE.fullmatch(service) and not service.startswith("-"))
 
 
+def is_valid_user_name(user_name):
+    return bool(user_name and USER_NAME_RE.fullmatch(user_name))
+
+
 def is_valid_url(url):
     if not url:
         return True
@@ -427,6 +459,26 @@ def run_systemctl_action(action, service):
         return False, str(e)
 
 
+def run_diagnostic_command(command, use_shell=False, timeout=20):
+    try:
+        result = subprocess.run(
+            command,
+            shell=use_shell,
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        output = result.stdout.strip()
+        error = result.stderr.strip()
+        if error:
+            output = f"{output}\n{error}".strip()
+        return result.returncode, output
+    except subprocess.TimeoutExpired:
+        return 124, f"Befehl nach {timeout}s abgebrochen."
+    except OSError as e:
+        return 1, str(e)
+
+
 def get_status(service):
     if not is_valid_service_name(service):
         return "invalid"
@@ -524,6 +576,20 @@ def control_service(action, service):
         messagebox.showerror("Ungültige Aktion", "Service oder Aktion ist ungültig.")
         return
 
+    protected_label = PROTECTED_SERVICES.get(service)
+    if protected_label and action == "restart":
+        if not messagebox.askyesno(
+            "Kritischer Dienst",
+            f"Kritischer Dienst: {protected_label}. Wirklich neu starten?"
+        ):
+            return
+    elif protected_label and action == "stop":
+        if not messagebox.askyesno(
+            "Remote-Zugriff warnen",
+            "Wenn du diesen Dienst stoppst, kannst du den Remote-Zugriff verlieren. Wirklich stoppen?"
+        ):
+            return
+
     invalidate_refresh()
     action_labels = {
         "start": "Start",
@@ -548,6 +614,105 @@ def control_service(action, service):
         refresh_services()
 
     run_background(task, done)
+
+
+def show_diagnostics_window():
+    win = tk.Toplevel(root)
+    win.title("Diagnose")
+    win.geometry("980x620")
+    win.configure(bg=COLORS["bg"])
+
+    button_row = tk.Frame(win, bg=COLORS["bg"], padx=10, pady=(10, 0))
+    button_row.pack(fill=tk.X)
+
+    text = scrolledtext.ScrolledText(
+        win,
+        wrap=tk.WORD,
+        bg="#0f0f0f",
+        fg=COLORS["text"],
+        insertbackground="white",
+        font=("Courier", 10)
+    )
+    text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    buttons = []
+
+    def append_output(message):
+        try:
+            text.config(state=tk.NORMAL)
+            text.insert(tk.END, message)
+            text.see(tk.END)
+            text.config(state=tk.DISABLED)
+        except tk.TclError:
+            pass
+
+    def append_from_thread(message):
+        try:
+            win.after(0, lambda: append_output(message))
+        except tk.TclError:
+            pass
+
+    def set_buttons_enabled(enabled):
+        state = tk.NORMAL if enabled else tk.DISABLED
+        for button in buttons:
+            try:
+                button.config(state=state)
+            except tk.TclError:
+                pass
+
+    def run_diagnostics():
+        set_buttons_enabled(False)
+        append_output("Diagnose gestartet...\n")
+
+        def task():
+            for label, command, use_shell in DIAGNOSTIC_COMMANDS:
+                append_from_thread(f"\n$ {label}\n")
+                code, output = run_diagnostic_command(command, use_shell=use_shell)
+                if output:
+                    append_from_thread(output + "\n")
+                else:
+                    append_from_thread("(keine Ausgabe)\n")
+                if code != 0:
+                    append_from_thread(f"[Exit {code}]\n")
+            append_from_thread("\nDiagnose abgeschlossen.\n")
+            try:
+                win.after(0, lambda: set_buttons_enabled(True))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=task, daemon=True).start()
+
+    def run_quick_fix(label, services):
+        set_buttons_enabled(False)
+        append_output(f"\nQuick-Fix: {label}\n")
+
+        def task():
+            for service in services:
+                append_from_thread(f"$ sudo systemctl restart {service}\n")
+                ok, message = run_systemctl_action("restart", service)
+                if ok:
+                    append_from_thread("OK\n")
+                else:
+                    append_from_thread((message or "Fehlgeschlagen.") + "\n")
+            append_from_thread(f"Quick-Fix abgeschlossen: {label}\n")
+            try:
+                win.after(0, lambda: set_buttons_enabled(True))
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=task, daemon=True).start()
+
+    buttons.append(create_button(button_row, text="Diagnose neu laden", width=18, command=run_diagnostics, variant="accent"))
+    buttons[-1].pack(side=tk.LEFT, padx=(0, 6))
+    buttons.append(create_button(button_row, text="SSH neu starten", width=16, command=lambda: run_quick_fix("SSH", ["ssh.service"]), variant="warning"))
+    buttons[-1].pack(side=tk.LEFT, padx=6)
+    buttons.append(create_button(button_row, text="ZeroTier neu starten", width=20, command=lambda: run_quick_fix("ZeroTier", ["zerotier-one.service"]), variant="warning"))
+    buttons[-1].pack(side=tk.LEFT, padx=6)
+    buttons.append(create_button(button_row, text="VNC neu starten", width=18, command=lambda: run_quick_fix("VNC", VNC_SERVICES), variant="warning"))
+    buttons[-1].pack(side=tk.LEFT, padx=6)
+
+    text.config(state=tk.DISABLED)
+    run_diagnostics()
 
 
 def control_autostart(action, service):
@@ -925,19 +1090,58 @@ def service_assistant_window():
         else:
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    content.bind("<Configure>", update_scroll_region)
-    canvas.bind("<Configure>", update_scroll_region)
-    canvas.bind_all("<MouseWheel>", on_mousewheel)
-    canvas.bind_all("<Button-4>", on_mousewheel)
-    canvas.bind_all("<Button-5>", on_mousewheel)
+    mousewheel_bound = False
 
-    def close_assistant():
+    def bind_mousewheel(event=None):
+        nonlocal mousewheel_bound
+        if mousewheel_bound:
+            return
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        canvas.bind_all("<Button-4>", on_mousewheel)
+        canvas.bind_all("<Button-5>", on_mousewheel)
+        mousewheel_bound = True
+
+    def pointer_is_over_scroll_area():
+        try:
+            pointer_x = canvas.winfo_pointerx() - canvas.winfo_rootx()
+            pointer_y = canvas.winfo_pointery() - canvas.winfo_rooty()
+            return 0 <= pointer_x < canvas.winfo_width() and 0 <= pointer_y < canvas.winfo_height()
+        except tk.TclError:
+            return False
+
+    def unbind_mousewheel(event=None, force=False):
+        nonlocal mousewheel_bound
+        if not mousewheel_bound:
+            return
+        if not force and pointer_is_over_scroll_area():
+            return
         try:
             canvas.unbind_all("<MouseWheel>")
             canvas.unbind_all("<Button-4>")
             canvas.unbind_all("<Button-5>")
         except tk.TclError:
             pass
+        mousewheel_bound = False
+
+    def unbind_mousewheel_if_outside(event=None):
+        try:
+            canvas.after(50, unbind_mousewheel)
+        except tk.TclError:
+            pass
+
+    content.bind("<Configure>", update_scroll_region)
+    canvas.bind("<Configure>", update_scroll_region)
+    canvas.bind("<Enter>", bind_mousewheel)
+    canvas.bind("<Leave>", unbind_mousewheel_if_outside)
+    canvas.bind("<FocusIn>", bind_mousewheel)
+    canvas.bind("<FocusOut>", unbind_mousewheel_if_outside)
+    content.bind("<Enter>", bind_mousewheel)
+    content.bind("<Leave>", unbind_mousewheel_if_outside)
+    content.bind("<FocusIn>", bind_mousewheel)
+    content.bind("<FocusOut>", unbind_mousewheel_if_outside)
+
+    def close_assistant():
+        unbind_mousewheel(force=True)
 
         try:
             win.destroy()
@@ -948,6 +1152,10 @@ def service_assistant_window():
 
     content_inner = tk.Frame(content, bg=COLORS["bg"])
     content_inner.pack(fill=tk.BOTH, expand=True, padx=24, pady=(18, 8))
+    content_inner.bind("<Enter>", bind_mousewheel)
+    content_inner.bind("<Leave>", unbind_mousewheel_if_outside)
+    content_inner.bind("<FocusIn>", bind_mousewheel)
+    content_inner.bind("<FocusOut>", unbind_mousewheel_if_outside)
     content = content_inner
 
     tk.Label(
@@ -1126,6 +1334,8 @@ def service_assistant_window():
             return None, "Eingaben für die Service-Datei dürfen keine Zeilenumbrüche enthalten."
         if not is_valid_service_name(service_name):
             return None, "Service-Dateiname ungültig. Beispiel: meinprojekt.service"
+        if user_name and not is_valid_user_name(user_name):
+            return None, "Linux-Benutzer ungültig. Beispiel: pi oder root."
         if not workdir or not os.path.isdir(workdir):
             return None, "Projektordner existiert nicht."
         if not script_path or not os.path.isfile(script_path):
@@ -1668,6 +1878,7 @@ button_frame.pack(side=tk.TOP)
 create_button(button_frame, text="Aktualisieren", width=16, command=refresh_services).pack(side=tk.LEFT, padx=5)
 create_button(button_frame, text="+ Service", width=14, command=add_project_window).pack(side=tk.LEFT, padx=5)
 create_button(button_frame, text="+ Assistent", width=14, command=service_assistant_window, variant="accent").pack(side=tk.LEFT, padx=5)
+create_button(button_frame, text="Diagnose", width=14, command=show_diagnostics_window, variant="warning").pack(side=tk.LEFT, padx=5)
 create_button(button_frame, text="Bearbeiten", width=14, command=edit_project_window).pack(side=tk.LEFT, padx=5)
 create_button(button_frame, text="- Service", width=14, command=delete_project_window).pack(side=tk.LEFT, padx=5)
 
