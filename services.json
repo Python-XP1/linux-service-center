@@ -6,15 +6,21 @@
         "url": ""
     },
     {
-        "name": "RealVNC",
-        "service": "realvnc-vnc-server.service",
-        "path": "",
-        "url": ""
-    },
-    {
         "name": "Code Server",
         "service": "code-server.service",
         "path": "",
         "url": "http://127.0.0.1:8080"
+    },
+    {
+        "name": "Zerotier",
+        "service": "zerotier-one.service",
+        "path": "",
+        "url": ""
+    },
+    {
+        "name": "Wayvnc",
+        "service": "wayvnc.service",
+        "path": "",
+        "url": ""
     }
 ]

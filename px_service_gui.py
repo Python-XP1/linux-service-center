@@ -57,7 +57,7 @@ LOGO_CANDIDATES = [
     os.path.join(BASE_DIR, "logo.png"),
 ]
 
-APP_VERSION = "v0.8.3"
+APP_VERSION = "v0.8.7"
 GITHUB_URL = "https://github.com/Python-XP1"
 PATREON_URL = "https://www.patreon.com/PythonXP"
 
@@ -73,26 +73,19 @@ PROTECTED_SERVICES = {
     "wayvnc.service": "WayVNC",
 }
 DIAGNOSTIC_COMMANDS = [
-    ("hostname -I", ["hostname", "-I"], False),
-    ("uptime -p", ["uptime", "-p"], False),
-    ("who -b", ["who", "-b"], False),
-    ("systemctl is-active ssh.service", ["systemctl", "is-active", "ssh.service"], False),
-    ("systemctl is-enabled ssh.service", ["systemctl", "is-enabled", "ssh.service"], False),
-    ("systemctl is-active zerotier-one.service", ["systemctl", "is-active", "zerotier-one.service"], False),
-    ("systemctl is-active realvnc-vnc-server.service", ["systemctl", "is-active", "realvnc-vnc-server.service"], False),
-    ("systemctl is-active vncserver-x11-serviced.service", ["systemctl", "is-active", "vncserver-x11-serviced.service"], False),
-    ("systemctl is-active wayvnc.service", ["systemctl", "is-active", "wayvnc.service"], False),
-    ("ss -tulpn | grep -E ':22|:5900|:5901|:9993'", "ss -tulpn | grep -E ':22|:5900|:5901|:9993'", True),
-    ("ip -br addr", ["ip", "-br", "addr"], False),
-    ("systemctl --failed --no-pager", ["systemctl", "--failed", "--no-pager"], False),
-    ("journalctl -u ssh.service -n 40 --no-pager", ["journalctl", "-u", "ssh.service", "-n", "40", "--no-pager"], False),
+    ("hostname -I", ["hostname", "-I"]),
+    ("uptime -p", ["uptime", "-p"]),
+    ("who -b", ["who", "-b"]),
+    ("systemctl is-active ssh.service", ["systemctl", "is-active", "ssh.service"]),
+    ("systemctl is-enabled ssh.service", ["systemctl", "is-enabled", "ssh.service"]),
+    ("systemctl is-active zerotier-one.service", ["systemctl", "is-active", "zerotier-one.service"]),
+    ("systemctl is-active realvnc-vnc-server.service", ["systemctl", "is-active", "realvnc-vnc-server.service"]),
+    ("systemctl is-active vncserver-x11-serviced.service", ["systemctl", "is-active", "vncserver-x11-serviced.service"]),
+    ("systemctl is-active wayvnc.service", ["systemctl", "is-active", "wayvnc.service"]),
+    ("ss -tulpn", ["ss", "-tulpn"]),
+    ("ip -br addr", ["ip", "-br", "addr"]),
+    ("systemctl --failed --no-pager", ["systemctl", "--failed", "--no-pager"]),
 ]
-VNC_SERVICES = [
-    "realvnc-vnc-server.service",
-    "vncserver-x11-serviced.service",
-    "wayvnc.service",
-]
-
 search_var = None
 service_count_label = None
 last_config_error = None
@@ -459,24 +452,31 @@ def run_systemctl_action(action, service):
         return False, str(e)
 
 
-def run_diagnostic_command(command, use_shell=False, timeout=20):
+def run_diagnostic_command(command, timeout=15):
     try:
         result = subprocess.run(
             command,
-            shell=use_shell,
             capture_output=True,
             text=True,
             timeout=timeout
         )
-        output = result.stdout.strip()
-        error = result.stderr.strip()
-        if error:
-            output = f"{output}\n{error}".strip()
-        return result.returncode, output
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
     except subprocess.TimeoutExpired:
-        return 124, f"Befehl nach {timeout}s abgebrochen."
+        return 124, "", f"Befehl nach {timeout}s abgebrochen."
     except OSError as e:
-        return 1, str(e)
+        return 1, "", str(e)
+
+
+def format_command_result(label, code, stdout, stderr):
+    parts = [f"$ {label}"]
+    if stdout:
+        parts.append(stdout)
+    if stderr:
+        parts.append(stderr)
+    if code != 0:
+        parts.append(f"[Exit {code}]")
+    parts.append("")
+    return "\n".join(parts)
 
 
 def get_status(service):
@@ -622,96 +622,79 @@ def show_diagnostics_window():
     win.geometry("980x620")
     win.configure(bg=COLORS["bg"])
 
-    button_row = tk.Frame(win, bg=COLORS["bg"], padx=10, pady=(10, 0))
-    button_row.pack(fill=tk.X)
-
-    text = scrolledtext.ScrolledText(
+    text_box = scrolledtext.ScrolledText(
         win,
         wrap=tk.WORD,
-        bg="#0f0f0f",
+        bg="#0f172a",
         fg=COLORS["text"],
-        insertbackground="white",
-        font=("Courier", 10)
+        insertbackground=COLORS["accent"],
+        selectbackground=COLORS["accent_2"],
+        selectforeground="#ffffff",
+        relief=tk.FLAT,
+        highlightthickness=1,
+        highlightbackground=COLORS["border"],
+        highlightcolor=COLORS["accent"],
+        font=("Courier", 10),
+        padx=8,
+        pady=8
     )
-    text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    text_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 6))
+
+    button_row = tk.Frame(win, bg=COLORS["bg"])
+    button_row.pack(fill=tk.X, side=tk.BOTTOM, padx=10, pady=(0, 10))
 
     buttons = []
 
-    def append_output(message):
-        try:
-            text.config(state=tk.NORMAL)
-            text.insert(tk.END, message)
-            text.see(tk.END)
-            text.config(state=tk.DISABLED)
-        except tk.TclError:
-            pass
+    def append_text(value):
+        text_box.config(state=tk.NORMAL)
+        text_box.insert(tk.END, value)
+        text_box.see(tk.END)
+        text_box.config(state=tk.DISABLED)
 
-    def append_from_thread(message):
-        try:
-            win.after(0, lambda: append_output(message))
-        except tk.TclError:
-            pass
+    def clear_text():
+        text_box.config(state=tk.NORMAL)
+        text_box.delete("1.0", tk.END)
+        text_box.config(state=tk.DISABLED)
 
     def set_buttons_enabled(enabled):
         state = tk.NORMAL if enabled else tk.DISABLED
         for button in buttons:
-            try:
-                button.config(state=state)
-            except tk.TclError:
-                pass
+            button.config(state=state)
+
+    def finish_diagnostics(text):
+        append_text(text)
+        set_buttons_enabled(True)
 
     def run_diagnostics():
+        clear_text()
+        append_text("Diagnosis running...\nPlease wait...\n\n")
         set_buttons_enabled(False)
-        append_output("Diagnose gestartet...\n")
 
         def task():
-            for label, command, use_shell in DIAGNOSTIC_COMMANDS:
-                append_from_thread(f"\n$ {label}\n")
-                code, output = run_diagnostic_command(command, use_shell=use_shell)
-                if output:
-                    append_from_thread(output + "\n")
-                else:
-                    append_from_thread("(keine Ausgabe)\n")
-                if code != 0:
-                    append_from_thread(f"[Exit {code}]\n")
-            append_from_thread("\nDiagnose abgeschlossen.\n")
+            output = [
+                "Hinweis: Remote-Zugriff kann je nach System über unterschiedliche Dienste laufen, "
+                "z.B. ssh.service, wayvnc.service, realvnc-vnc-server.service oder "
+                "vncserver-x11-serviced.service.\n\n"
+            ]
+            for label, command in DIAGNOSTIC_COMMANDS:
+                try:
+                    code, stdout, stderr = run_diagnostic_command(command, timeout=15)
+                    output.append(format_command_result(label, code, stdout, stderr))
+                except Exception as e:
+                    output.append(f"$ {label}\nFEHLER: {e}\n\n")
+            output.append("Diagnose abgeschlossen.\n")
+
             try:
-                win.after(0, lambda: set_buttons_enabled(True))
-            except tk.TclError:
-                pass
-
-        threading.Thread(target=task, daemon=True).start()
-
-    def run_quick_fix(label, services):
-        set_buttons_enabled(False)
-        append_output(f"\nQuick-Fix: {label}\n")
-
-        def task():
-            for service in services:
-                append_from_thread(f"$ sudo systemctl restart {service}\n")
-                ok, message = run_systemctl_action("restart", service)
-                if ok:
-                    append_from_thread("OK\n")
-                else:
-                    append_from_thread((message or "Fehlgeschlagen.") + "\n")
-            append_from_thread(f"Quick-Fix abgeschlossen: {label}\n")
-            try:
-                win.after(0, lambda: set_buttons_enabled(True))
-            except tk.TclError:
-                pass
+                root.after(0, lambda text="".join(output): finish_diagnostics(text))
+            except tk.TclError as e:
+                print(f"Diagnosefenster Fehler: {e}")
 
         threading.Thread(target=task, daemon=True).start()
 
     buttons.append(create_button(button_row, text="Diagnose neu laden", width=18, command=run_diagnostics, variant="accent"))
     buttons[-1].pack(side=tk.LEFT, padx=(0, 6))
-    buttons.append(create_button(button_row, text="SSH neu starten", width=16, command=lambda: run_quick_fix("SSH", ["ssh.service"]), variant="warning"))
-    buttons[-1].pack(side=tk.LEFT, padx=6)
-    buttons.append(create_button(button_row, text="ZeroTier neu starten", width=20, command=lambda: run_quick_fix("ZeroTier", ["zerotier-one.service"]), variant="warning"))
-    buttons[-1].pack(side=tk.LEFT, padx=6)
-    buttons.append(create_button(button_row, text="VNC neu starten", width=18, command=lambda: run_quick_fix("VNC", VNC_SERVICES), variant="warning"))
-    buttons[-1].pack(side=tk.LEFT, padx=6)
 
-    text.config(state=tk.DISABLED)
+    text_box.config(state=tk.DISABLED)
     run_diagnostics()
 
 
