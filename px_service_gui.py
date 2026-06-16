@@ -57,7 +57,7 @@ LOGO_CANDIDATES = [
     os.path.join(BASE_DIR, "logo.png"),
 ]
 
-APP_VERSION = "v0.8.7"
+APP_VERSION = "v0.8.8"
 GITHUB_URL = "https://github.com/Python-XP1"
 PATREON_URL = "https://www.patreon.com/PythonXP"
 
@@ -819,11 +819,35 @@ def browse_services(target_entry):
         font=("Arial", 11, "bold")
     ).pack(pady=10)
 
-    search_entry = create_entry(win, width=70)
-    search_entry.pack(padx=10, pady=5)
+    tk.Label(
+        win,
+        text="Service suchen",
+        fg=COLORS["text"],
+        bg=COLORS["bg"],
+        font=FONT_BOLD
+    ).pack(anchor="w", padx=10)
 
-    listbox = create_listbox(win, width=85)
-    listbox.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+    search_entry = create_entry(win, width=70)
+    search_entry.pack(fill=tk.X, padx=10, pady=(3, 0))
+    search_entry.insert(0, "Service suchen...")
+
+    tk.Label(
+        win,
+        text="Tippe einen Namensteil ein, z.B. ssh, bluetooth, nginx",
+        fg=COLORS["muted"],
+        bg=COLORS["bg"],
+        font=FONT_SMALL
+    ).pack(anchor="w", padx=10, pady=(2, 8))
+
+    list_frame = tk.Frame(win, bg=COLORS["bg"])
+    list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+
+    scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+    listbox = create_listbox(list_frame, width=85)
+    listbox.configure(yscrollcommand=scrollbar.set)
+    scrollbar.configure(command=listbox.yview)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     out, err = run_cmd(["systemctl", "list-unit-files", "--type=service", "--no-legend"])
 
@@ -850,7 +874,16 @@ def browse_services(target_entry):
         target_entry.insert(0, service)
         win.destroy()
 
-    search_entry.bind("<KeyRelease>", lambda e: fill_list(search_entry.get()))
+    def get_search_text():
+        value = search_entry.get()
+        return "" if value == "Service suchen..." else value
+
+    def clear_placeholder(event=None):
+        if search_entry.get() == "Service suchen...":
+            search_entry.delete(0, tk.END)
+
+    search_entry.bind("<FocusIn>", clear_placeholder)
+    search_entry.bind("<KeyRelease>", lambda e: fill_list(get_search_text()))
     listbox.bind("<Double-Button-1>", select_service)
 
     create_button(win, text="Übernehmen", command=select_service).pack(pady=10)

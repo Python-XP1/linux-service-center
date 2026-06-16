@@ -25,6 +25,9 @@ codex_copy.txt
 *.swo
 .DS_Store
 Thumbs.db
+.codex
+.agents
+.stfolder
 
 # Syncthing metadata and conflict copies
 .stfolder/
