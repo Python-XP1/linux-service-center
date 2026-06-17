@@ -57,7 +57,7 @@ Powered by PythonXP.
 
 Clone the repository:
 
-git clone https://github.com/Python-XP1/Linux-Service-Center.git
+git clone https://github.com/Python-XP1/linux-service-center.git
 
 cd Linux-Service-Center
 
