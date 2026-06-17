@@ -15,29 +15,21 @@ COMMAND_TIMEOUT = 10
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
 USER_NAME_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_.-]*[$]?|[0-9]+)$")
 RESTART_POLICIES = {"no", "always", "on-success", "on-failure", "on-abnormal", "on-abort", "on-watchdog"}
+
+# Keep diagnostics generic so the project does not assume optional services
+# such as a specific remote-access stack are installed.
 DIAGNOSTIC_COMMANDS = [
     ("hostname -I", ["hostname", "-I"], False),
     ("uptime -p", ["uptime", "-p"], False),
     ("who -b", ["who", "-b"], False),
-    ("systemctl is-active ssh.service", ["systemctl", "is-active", "ssh.service"], False),
-    ("systemctl is-enabled ssh.service", ["systemctl", "is-enabled", "ssh.service"], False),
-    ("systemctl is-active zerotier-one.service", ["systemctl", "is-active", "zerotier-one.service"], False),
-    ("systemctl is-active realvnc-vnc-server.service", ["systemctl", "is-active", "realvnc-vnc-server.service"], False),
-    ("systemctl is-active vncserver-x11-serviced.service", ["systemctl", "is-active", "vncserver-x11-serviced.service"], False),
-    ("systemctl is-active wayvnc.service", ["systemctl", "is-active", "wayvnc.service"], False),
-    ("ss -tulpn | grep -E ':22|:5900|:5901|:9993'", "ss -tulpn | grep -E ':22|:5900|:5901|:9993'", True),
-    ("ip -br addr", ["ip", "-br", "addr"], False),
+    ("ss -tulpen", ["ss", "-tulpen"], False),
+    ("ip addr", ["ip", "addr"], False),
     ("systemctl --failed --no-pager", ["systemctl", "--failed", "--no-pager"], False),
-    ("journalctl -u ssh.service -n 40 --no-pager", ["journalctl", "-u", "ssh.service", "-n", "40", "--no-pager"], False),
-]
-VNC_SERVICES = [
-    "realvnc-vnc-server.service",
-    "vncserver-x11-serviced.service",
-    "wayvnc.service",
+    ("systemctl list-units --type=service --state=running --no-pager", ["systemctl", "list-units", "--type=service", "--state=running", "--no-pager"], False),
 ]
 
 APP_NAME = "Linux Service Center CLI"
-APP_VERSION = "v1.0.0-cli"
+APP_VERSION = "v0.9.2-cli"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -174,6 +166,8 @@ def save_services(services):
     tmp_path = None
 
     try:
+        # Replace the config atomically to avoid leaving a partial JSON file
+        # behind if writing fails.
         fd, tmp_path = tempfile.mkstemp(prefix=".services.", suffix=".json", dir=directory)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(services, f, indent=4, ensure_ascii=False)
@@ -273,8 +267,11 @@ def list_services(filter_text=""):
     else:
         services_to_show = services
 
-    print(f"\n{BOLD}{'#':<3} {'Status':<10} {'Autostart':<12} {'Uptime':<8} {'Name':<22} Service{RESET}")
+    print(f"\n{BOLD}{'#':<3} {'Status':<10} {'Startup':<12} {'Uptime':<8} {'Name':<22} Service{RESET}")
     print("-" * 90)
+
+    if not services_to_show:
+        print(c("No services configured yet. Add a service to get started.", GRAY))
 
     for i, item in enumerate(services_to_show, start=1):
         service = item["service"]
@@ -525,7 +522,7 @@ def service_assistant():
         pause()
         return
 
-    project_dir_input = read_input("Project folder, example /home/pi/Einkaufsliste: ")
+    project_dir_input = read_input("Project folder, example /home/pi/my-service: ")
     if project_dir_input is None:
         return
 
@@ -592,7 +589,7 @@ def service_assistant():
         pause()
         return
 
-    autostart_input = read_input("Enable autostart? [Y/n]: ", default="y")
+    autostart_input = read_input("Enable startup? [Y/n]: ", default="y")
     if autostart_input is None:
         return
 
@@ -702,30 +699,6 @@ def show_diagnostics():
     pause()
 
 
-def service_unit_exists(service):
-    code, out, _ = run_cmd(["systemctl", "list-unit-files", service, "--no-legend"], timeout=10)
-    return code == 0 and bool(out.strip())
-
-
-def quick_fix_remote_services():
-    clear()
-    print_header()
-    print(c("Quick-Fix remote services", BOLD))
-
-    services = ["ssh.service", "zerotier-one.service"]
-    services.extend(service for service in VNC_SERVICES if service_unit_exists(service))
-
-    for service in services:
-        print(f"\nRunning: sudo systemctl restart {service}")
-        code, out, err = sudo_cmd(["systemctl", "restart", service], timeout=30)
-        if code == 0:
-            print(c("OK", GREEN))
-        else:
-            print(c(err or out or "Failed", RED))
-
-    pause()
-
-
 def main_menu():
     while True:
         clear()
@@ -737,15 +710,14 @@ def main_menu():
         print("2  Start service")
         print("3  Stop service")
         print("4  Restart service")
-        print("5  Enable autostart")
-        print("6  Disable autostart")
+        print("5  Enable startup")
+        print("6  Disable startup")
         print("7  Show logs")
         print("8  Add existing service to list")
         print("9  Remove service from list")
         print("10 Browse installed services")
         print("11 + Service Assistant")
-        print("12 Diagnose anzeigen")
-        print("13 Quick-Fix Remote-Dienste")
+        print("12 Show diagnostics")
         print("q  Quit")
 
         choice = read_input("\nSelection: ")
@@ -781,8 +753,6 @@ def main_menu():
             service_assistant()
         elif choice == "12":
             show_diagnostics()
-        elif choice == "13":
-            quick_fix_remote_services()
         else:
             print(c("Invalid selection.", RED))
             time.sleep(0.8)

@@ -57,13 +57,16 @@ LOGO_CANDIDATES = [
     os.path.join(BASE_DIR, "logo.png"),
 ]
 
-APP_VERSION = "v1.0.0"
+APP_VERSION = "v0.9.2"
 APP_NAME = "Linux Service Center"
 APP_BRANDING = "powered by PythonXP"
 GITHUB_URL = "https://github.com/Python-XP1"
 PATREON_URL = "https://www.patreon.com/PythonXP"
 
 COMMAND_TIMEOUT = 10
+
+# Pixel widths for the main service table. Header and rows use the same
+# grid configuration so status, startup, uptime, and actions stay aligned.
 SERVICE_GRID_COLUMNS = {
     "service": 250,
     "status": 110,
@@ -75,26 +78,16 @@ ACTION_BUTTON_PADX = 2
 
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
 USER_NAME_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_.-]*[$]?|[0-9]+)$")
-PROTECTED_SERVICES = {
-    "ssh.service": "SSH",
-    "zerotier-one.service": "ZeroTier",
-    "realvnc-vnc-server.service": "RealVNC",
-    "vncserver-x11-serviced.service": "RealVNC",
-    "wayvnc.service": "WayVNC",
-}
+
+# Keep diagnostics generic: avoid hard-coded optional remote-access services.
 DIAGNOSTIC_COMMANDS = [
     ("hostname -I", ["hostname", "-I"]),
     ("uptime -p", ["uptime", "-p"]),
     ("who -b", ["who", "-b"]),
-    ("systemctl is-active ssh.service", ["systemctl", "is-active", "ssh.service"]),
-    ("systemctl is-enabled ssh.service", ["systemctl", "is-enabled", "ssh.service"]),
-    ("systemctl is-active zerotier-one.service", ["systemctl", "is-active", "zerotier-one.service"]),
-    ("systemctl is-active realvnc-vnc-server.service", ["systemctl", "is-active", "realvnc-vnc-server.service"]),
-    ("systemctl is-active vncserver-x11-serviced.service", ["systemctl", "is-active", "vncserver-x11-serviced.service"]),
-    ("systemctl is-active wayvnc.service", ["systemctl", "is-active", "wayvnc.service"]),
-    ("ss -tulpn", ["ss", "-tulpn"]),
-    ("ip -br addr", ["ip", "-br", "addr"]),
+    ("ss -tulpen", ["ss", "-tulpen"]),
+    ("ip addr", ["ip", "addr"]),
     ("systemctl --failed --no-pager", ["systemctl", "--failed", "--no-pager"]),
+    ("systemctl list-units --type=service --state=running --no-pager", ["systemctl", "list-units", "--type=service", "--state=running", "--no-pager"]),
 ]
 search_var = None
 service_count_label = None
@@ -272,7 +265,7 @@ def format_service_summary(services):
         else:
             inactive += 1
 
-    return f"{len(services)} Services · {active} aktiv · {inactive} inaktiv · {failed} failed"
+    return f"{len(services)} services · {active} active · {inactive} inactive · {failed} failed"
 
 
 def uptime_color(uptime):
@@ -297,11 +290,11 @@ def load_services():
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
-        report_config_error(f"{CONFIG_FILE} konnte nicht gelesen werden:\n{e}")
+        report_config_error(f"{CONFIG_FILE} could not be read:\n{e}")
         return []
 
     if not isinstance(data, list):
-        report_config_error("services.json muss eine Liste von Services enthalten.")
+        report_config_error("services.json must contain a list of services.")
         return []
 
     last_config_error = None
@@ -326,6 +319,8 @@ def save_services(services):
     fd, tmp_path = tempfile.mkstemp(prefix=".services.", suffix=".json", dir=directory)
 
     try:
+        # Write through a temporary file so a failed save does not corrupt
+        # the existing services.json.
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(services, f, indent=4, ensure_ascii=False)
             f.write("\n")
@@ -338,7 +333,7 @@ def save_services(services):
         except OSError:
             pass
 
-        show_error("Speichern fehlgeschlagen", str(e))
+        show_error("Save failed", str(e))
         return False
 
     return True
@@ -355,7 +350,7 @@ def run_cmd(cmd):
         return result.stdout.strip(), result.stderr.strip()
 
     except subprocess.TimeoutExpired:
-        return "", f"Befehl nach {COMMAND_TIMEOUT}s abgebrochen: {' '.join(cmd)}"
+        return "", f"Command timed out after {COMMAND_TIMEOUT}s: {' '.join(cmd)}"
 
     except Exception as e:
         return "", str(e)
@@ -378,7 +373,7 @@ def report_config_error(message):
         return
 
     last_config_error = message
-    show_error("Konfiguration fehlerhaft", message)
+    show_error("Invalid configuration", message)
 
 
 def report_runtime_error(key, title, message):
@@ -414,13 +409,13 @@ def normalize_path(path):
 
 def validate_service_config(item):
     if not item["name"] or not item["service"]:
-        return "Anzeigename und Systemd Service müssen ausgefüllt sein."
+        return "Display name and systemd service are required."
 
     if not is_valid_service_name(item["service"]):
-        return "Der Systemd Service muss wie ein gültiger .service-Name aussehen, z. B. ssh.service."
+        return "The systemd service must look like a valid .service name, e.g. ssh.service."
 
     if item["url"] and not is_valid_url(item["url"]):
-        return "Die URL muss mit http:// oder https:// beginnen."
+        return "The URL must start with http:// or https://."
 
     if item["path"]:
         item["path"] = normalize_path(item["path"])
@@ -429,6 +424,7 @@ def validate_service_config(item):
 
 
 def run_background(task, on_done=None):
+    """Run blocking work off the Tk main loop and marshal results back safely."""
     def worker():
         try:
             result = task()
@@ -490,15 +486,15 @@ def run_systemctl_action(action, service):
 
         if needs_authentication(message):
             message = (
-                "Für diese Aktion fehlen Rechte.\n"
-                "Erlaube die angezeigte Authentifizierung, starte das Programm mit passenden Rechten "
-                "oder richte sudoers für systemctl ein.\n\n"
-                f"Originalmeldung:\n{message}"
+                "Missing permissions for this action.\n"
+                "Allow the displayed authentication prompt, start the application with suitable permissions, "
+                "or configure sudoers for systemctl.\n\n"
+                f"Original message:\n{message}"
             )
         return False, message
 
     except subprocess.TimeoutExpired:
-        return False, "systemctl hat nach 30 Sekunden nicht geantwortet."
+        return False, "systemctl did not respond within 30 seconds."
 
     except OSError as e:
         return False, str(e)
@@ -514,7 +510,7 @@ def run_diagnostic_command(command, timeout=15):
         )
         return result.returncode, result.stdout.strip(), result.stderr.strip()
     except subprocess.TimeoutExpired:
-        return 124, "", f"Befehl nach {timeout}s abgebrochen."
+        return 124, "", f"Command timed out after {timeout}s."
     except OSError as e:
         return 1, "", str(e)
 
@@ -590,7 +586,7 @@ def get_cpu_usage():
     try:
         return f"{psutil.cpu_percent(interval=0.1):.1f}%"
     except (psutil.Error, OSError) as e:
-        report_runtime_error("cpu", "Systeminfo Fehler", f"CPU-Auslastung konnte nicht gelesen werden:\n{e}")
+        report_runtime_error("cpu", "System Info Error", f"CPU usage could not be read:\n{e}")
         return "N/A"
 
 
@@ -598,7 +594,7 @@ def get_ram_usage():
     try:
         return f"{psutil.virtual_memory().percent:.1f}%"
     except (psutil.Error, OSError) as e:
-        report_runtime_error("ram", "Systeminfo Fehler", f"RAM-Auslastung konnte nicht gelesen werden:\n{e}")
+        report_runtime_error("ram", "System Info Error", f"RAM usage could not be read:\n{e}")
         return "N/A"
 
 
@@ -619,28 +615,14 @@ def get_disk_free():
         disk = psutil.disk_usage("/")
         return f"{disk.free / (1024 ** 3):.1f} GB"
     except (psutil.Error, OSError) as e:
-        report_runtime_error("disk", "Systeminfo Fehler", f"Freier Speicher konnte nicht gelesen werden:\n{e}")
+        report_runtime_error("disk", "System Info Error", f"Free disk space could not be read:\n{e}")
         return "N/A"
 
 
 def control_service(action, service):
     if action not in {"start", "stop", "restart"} or not is_valid_service_name(service):
-        messagebox.showerror("Ungültige Aktion", "Service oder Aktion ist ungültig.")
+        messagebox.showerror("Invalid action", "Service or action is invalid.")
         return
-
-    protected_label = PROTECTED_SERVICES.get(service)
-    if protected_label and action == "restart":
-        if not messagebox.askyesno(
-            "Kritischer Dienst",
-            f"Kritischer Dienst: {protected_label}. Wirklich neu starten?"
-        ):
-            return
-    elif protected_label and action == "stop":
-        if not messagebox.askyesno(
-            "Remote-Zugriff warnen",
-            "Wenn du diesen Dienst stoppst, kannst du den Remote-Zugriff verlieren. Wirklich stoppen?"
-        ):
-            return
 
     invalidate_refresh()
     action_labels = {
@@ -650,18 +632,18 @@ def control_service(action, service):
     }
 
     if service_count_label:
-        service_count_label.config(text=f"{action_labels[action]} läuft für {service}...")
+        service_count_label.config(text=f"{action_labels[action]} running for {service}...")
 
     def task():
         return run_systemctl_action(action, service)
 
     def done(result):
         if isinstance(result, Exception):
-            messagebox.showerror("systemctl Fehler", str(result))
+            messagebox.showerror("systemctl Error", str(result))
         elif not result[0]:
-            messagebox.showerror("systemctl Fehler", result[1] or "Aktion fehlgeschlagen.")
+            messagebox.showerror("systemctl Error", result[1] or "Action failed.")
         elif service_count_label:
-            service_count_label.config(text=f"{action_labels[action]} ausgeführt für {service}. Status wird geprüft...")
+            service_count_label.config(text=f"{action_labels[action]} completed for {service}. Checking status...")
 
         refresh_services()
 
@@ -670,7 +652,7 @@ def control_service(action, service):
 
 def show_diagnostics_window():
     win = tk.Toplevel(root)
-    win.title("Diagnose")
+    win.title("Diagnostics")
     win.geometry("980x620")
     win.configure(bg=COLORS["bg"])
 
@@ -723,27 +705,27 @@ def show_diagnostics_window():
         set_buttons_enabled(False)
 
         def task():
+            # Collect output in the worker thread and update Tk only once from
+            # the main thread.
             output = [
-                "Hinweis: Remote-Zugriff kann je nach System über unterschiedliche Dienste laufen, "
-                "z.B. ssh.service, wayvnc.service, realvnc-vnc-server.service oder "
-                "vncserver-x11-serviced.service.\n\n"
+                "Note: Diagnostics show general system information and running systemd services.\n\n"
             ]
             for label, command in DIAGNOSTIC_COMMANDS:
                 try:
                     code, stdout, stderr = run_diagnostic_command(command, timeout=15)
                     output.append(format_command_result(label, code, stdout, stderr))
                 except Exception as e:
-                    output.append(f"$ {label}\nFEHLER: {e}\n\n")
-            output.append("Diagnose abgeschlossen.\n")
+                    output.append(f"$ {label}\nERROR: {e}\n\n")
+            output.append("Diagnostics completed.\n")
 
             try:
                 root.after(0, lambda text="".join(output): finish_diagnostics(text))
             except tk.TclError as e:
-                print(f"Diagnosefenster Fehler: {e}")
+                print(f"Diagnostics window error: {e}")
 
         threading.Thread(target=task, daemon=True).start()
 
-    buttons.append(create_button(button_row, text="Diagnose neu laden", width=18, command=run_diagnostics, variant="accent"))
+    buttons.append(create_button(button_row, text="Reload diagnostics", width=18, command=run_diagnostics, variant="accent"))
     buttons[-1].pack(side=tk.LEFT, padx=(0, 6))
 
     text_box.config(state=tk.DISABLED)
@@ -752,21 +734,21 @@ def show_diagnostics_window():
 
 def control_autostart(action, service):
     if action not in {"enable", "disable"} or not is_valid_service_name(service):
-        messagebox.showerror("Ungültige Aktion", "Service oder Aktion ist ungültig.")
+        messagebox.showerror("Invalid action", "Service or action is invalid.")
         return
 
     invalidate_refresh()
     if service_count_label:
-        service_count_label.config(text=f"Autostart-{action} läuft für {service}...")
+        service_count_label.config(text=f"Startup {action} running for {service}...")
 
     def task():
         return run_systemctl_action(action, service)
 
     def done(result):
         if isinstance(result, Exception):
-            messagebox.showerror("systemctl Fehler", str(result))
+            messagebox.showerror("systemctl Error", str(result))
         elif not result[0]:
-            messagebox.showerror("systemctl Fehler", result[1] or "Aktion fehlgeschlagen.")
+            messagebox.showerror("systemctl Error", result[1] or "Action failed.")
 
         refresh_services()
 
@@ -777,7 +759,7 @@ def open_external_link(url):
     if url and is_valid_url(url):
         subprocess.Popen(["xdg-open", url])
     else:
-        messagebox.showwarning("Link ungültig", "Der hinterlegte Link ist ungültig.")
+        messagebox.showwarning("Invalid link", "The configured link is invalid.")
 
 
 def open_url(url):
@@ -786,10 +768,10 @@ def open_url(url):
             subprocess.Popen(["xdg-open", url])
             return
         except OSError as e:
-            messagebox.showerror("URL öffnen fehlgeschlagen", str(e))
+            messagebox.showerror("Open URL failed", str(e))
             return
 
-    messagebox.showwarning("URL ungültig", "Keine gültige http(s)-URL hinterlegt.")
+    messagebox.showwarning("Invalid URL", "No valid http(s) URL is configured.")
 
 
 def open_folder(path):
@@ -799,16 +781,16 @@ def open_folder(path):
         try:
             subprocess.Popen(["xdg-open", safe_path])
         except OSError as e:
-            messagebox.showerror("Ordner öffnen fehlgeschlagen", str(e))
+            messagebox.showerror("Open folder failed", str(e))
     else:
-        messagebox.showwarning("Pfad fehlt", "Projektordner nicht gefunden.")
+        messagebox.showwarning("Missing path", "Project folder not found.")
 
 
 def open_code(path):
     safe_path = normalize_path(path)
 
     if not safe_path or not os.path.isdir(safe_path):
-        messagebox.showwarning("Pfad fehlt", "Projektordner nicht gefunden.")
+        messagebox.showwarning("Missing path", "Project folder not found.")
         return
 
     try:
@@ -816,8 +798,8 @@ def open_code(path):
 
         if not code_cmd:
             messagebox.showerror(
-                "VS Code Fehler",
-                "VS Code wurde nicht gefunden."
+                "VS Code Error",
+                "VS Code was not found."
             )
             return
 
@@ -830,12 +812,12 @@ def open_code(path):
         )
 
     except Exception as e:
-        messagebox.showerror("VS Code Fehler", str(e))
+        messagebox.showerror("VS Code Error", str(e))
 
 
 def show_logs(service):
     if not is_valid_service_name(service):
-        messagebox.showerror("Ungültiger Service", "Der Service-Name ist ungültig.")
+        messagebox.showerror("Invalid service", "The service name is invalid.")
         return
 
     out, err = run_cmd(["journalctl", "-u", service, "-n", "120", "--no-pager"])
@@ -859,13 +841,13 @@ def show_logs(service):
 
 def browse_services(target_entry):
     win = tk.Toplevel(root)
-    win.title("Systemd Services durchsuchen")
+    win.title("Browse systemd services")
     win.geometry("720x520")
     win.configure(bg=COLORS["bg"])
 
     tk.Label(
         win,
-        text="Doppelklick auf einen Service zum Übernehmen",
+        text="Double-click a service to select it",
         fg="white",
         bg=COLORS["bg"],
         font=("Arial", 11, "bold")
@@ -873,7 +855,7 @@ def browse_services(target_entry):
 
     tk.Label(
         win,
-        text="Service suchen",
+        text="Search service",
         fg=COLORS["text"],
         bg=COLORS["bg"],
         font=FONT_BOLD
@@ -881,11 +863,11 @@ def browse_services(target_entry):
 
     search_entry = create_entry(win, width=70)
     search_entry.pack(fill=tk.X, padx=10, pady=(3, 0))
-    search_entry.insert(0, "Service suchen...")
+    search_entry.insert(0, "Search service...")
 
     tk.Label(
         win,
-        text="Tippe einen Namensteil ein, z.B. ssh, bluetooth, nginx",
+        text="Type part of a name, e.g. ssh, bluetooth, nginx",
         fg=COLORS["muted"],
         bg=COLORS["bg"],
         font=FONT_SMALL
@@ -904,7 +886,7 @@ def browse_services(target_entry):
     out, err = run_cmd(["systemctl", "list-unit-files", "--type=service", "--no-legend"])
 
     if err and not out:
-        messagebox.showwarning("Services laden", err)
+        messagebox.showwarning("Load services", err)
 
     all_services = sorted([line.split()[0] for line in out.splitlines() if line.strip()])
 
@@ -928,17 +910,17 @@ def browse_services(target_entry):
 
     def get_search_text():
         value = search_entry.get()
-        return "" if value == "Service suchen..." else value
+        return "" if value == "Search service..." else value
 
     def clear_placeholder(event=None):
-        if search_entry.get() == "Service suchen...":
+        if search_entry.get() == "Search service...":
             search_entry.delete(0, tk.END)
 
     search_entry.bind("<FocusIn>", clear_placeholder)
     search_entry.bind("<KeyRelease>", lambda e: fill_list(get_search_text()))
     listbox.bind("<Double-Button-1>", select_service)
 
-    create_button(win, text="Übernehmen", command=select_service).pack(pady=10)
+    create_button(win, text="Apply", command=select_service).pack(pady=10)
 
     fill_list()
 
@@ -951,7 +933,7 @@ def project_form(title_text, existing=None, index=None):
 
     fields = {}
 
-    tk.Label(win, text="Anzeigename", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
+    tk.Label(win, text="Display name", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
     fields["name"] = create_entry(win, width=60)
     fields["name"].pack(padx=20, pady=3)
     fields["name"].insert(0, existing.get("name", "") if existing else "")
@@ -963,7 +945,7 @@ def project_form(title_text, existing=None, index=None):
 
     tk.Label(
         win,
-        text="Beispiel: ssh.service, code-server.service, bluetooth.service",
+        text="Example: ssh.service, bluetooth.service, nginx.service",
         fg=COLORS["muted"],
         bg=COLORS["bg"],
         font=("Arial", 9)
@@ -971,12 +953,12 @@ def project_form(title_text, existing=None, index=None):
 
     create_button(
         win,
-        text="Services durchsuchen",
+        text="Browse services",
         width=22,
         command=lambda: browse_services(fields["service"])
     ).pack(pady=6)
 
-    tk.Label(win, text="Ordner/Pfad optional", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
+    tk.Label(win, text="Folder/path optional", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
     fields["path"] = create_entry(win, width=60)
     fields["path"].pack(padx=20, pady=3)
     fields["path"].insert(0, existing.get("path", "") if existing else "")
@@ -999,7 +981,7 @@ def project_form(title_text, existing=None, index=None):
         validation_error = validate_service_config(item)
 
         if validation_error:
-            messagebox.showwarning("Eingabe prüfen", validation_error)
+            messagebox.showwarning("Check input", validation_error)
             return
 
         if index is None:
@@ -1007,7 +989,7 @@ def project_form(title_text, existing=None, index=None):
         elif 0 <= index < len(services):
             services[index] = item
         else:
-            messagebox.showerror("Speichern fehlgeschlagen", "Der ausgewählte Service existiert nicht mehr.")
+            messagebox.showerror("Save failed", "The selected service no longer exists.")
             return
 
         if not save_services(services):
@@ -1016,7 +998,7 @@ def project_form(title_text, existing=None, index=None):
         refresh_services()
         win.destroy()
 
-    create_button(win, text="Speichern", width=18, command=save_project).pack(pady=18)
+    create_button(win, text="Save", width=18, command=save_project).pack(pady=18)
 
 
 
@@ -1070,7 +1052,7 @@ def build_service_unit(description, command, working_dir, user_name, restart_pol
 def write_systemd_service(service_name, unit_text):
     """Write a service file into /etc/systemd/system using sudo tee."""
     if not is_valid_service_name(service_name):
-        return False, "Ungültiger Service-Name. Beispiel: meinprojekt.service"
+        return False, "Invalid service name. Example: my-project.service"
 
     service_path = f"/etc/systemd/system/{service_name}"
 
@@ -1084,7 +1066,7 @@ def write_systemd_service(service_name, unit_text):
         )
 
         if result.returncode != 0:
-            return False, result.stderr.strip() or "Service-Datei konnte nicht geschrieben werden."
+            return False, result.stderr.strip() or "Service file could not be written."
 
         chmod_result = subprocess.run(
             ["sudo", "chmod", "644", service_path],
@@ -1094,7 +1076,7 @@ def write_systemd_service(service_name, unit_text):
         )
 
         if chmod_result.returncode != 0:
-            return False, chmod_result.stderr.strip() or "Rechte konnten nicht gesetzt werden."
+            return False, chmod_result.stderr.strip() or "Permissions could not be set."
 
         reload_result = subprocess.run(
             ["sudo", "systemctl", "daemon-reload"],
@@ -1104,12 +1086,12 @@ def write_systemd_service(service_name, unit_text):
         )
 
         if reload_result.returncode != 0:
-            return False, reload_result.stderr.strip() or "daemon-reload fehlgeschlagen."
+            return False, reload_result.stderr.strip() or "daemon-reload failed."
 
-        return True, f"Service erstellt: {service_path}"
+        return True, f"Service created: {service_path}"
 
     except subprocess.TimeoutExpired:
-        return False, "Schreibvorgang hat zu lange gedauert."
+        return False, "Write operation timed out."
     except OSError as e:
         return False, str(e)
 
@@ -1117,7 +1099,7 @@ def write_systemd_service(service_name, unit_text):
 def service_assistant_window():
     """Simple assistant that creates a real systemd .service file and adds it to the panel."""
     win = tk.Toplevel(root)
-    win.title("+ Service Assistent")
+    win.title("+ Service Assistant")
     win.geometry("760x620")
     win.minsize(720, 560)
     win.configure(bg=COLORS["bg"])
@@ -1125,8 +1107,8 @@ def service_assistant_window():
     outer = tk.Frame(win, bg=COLORS["bg"])
     outer.pack(fill=tk.BOTH, expand=True)
 
-    # Scrollbarer Inhaltsbereich: Der Button bleibt unten immer sichtbar,
-    # auch bei kleinen VNC-Fenstern oder wenn "Erweiterte Einstellungen" offen ist.
+    # Scrollable content area: the button bar remains visible at the bottom,
+    # even in small windows or when advanced settings are open.
     scroll_area = tk.Frame(outer, bg=COLORS["bg"])
     scroll_area.pack(fill=tk.BOTH, expand=True)
 
@@ -1150,7 +1132,7 @@ def service_assistant_window():
         canvas.itemconfigure(content_window, width=canvas.winfo_width())
 
     def on_mousewheel(event):
-        # Linux/X11 liefert Button-4/Button-5, Windows/macOS meist MouseWheel.
+        # Linux/X11 sends Button-4/Button-5, Windows/macOS usually MouseWheel.
         if event.num == 4:
             canvas.yview_scroll(-1, "units")
         elif event.num == 5:
@@ -1228,7 +1210,7 @@ def service_assistant_window():
 
     tk.Label(
         content,
-        text="Service Assistent",
+        text="Service Assistant",
         fg=COLORS["text"],
         bg=COLORS["bg"],
         font=("Arial", 18, "bold")
@@ -1236,7 +1218,7 @@ def service_assistant_window():
 
     tk.Label(
         content,
-        text="Einfacher Modus: Projektordner wählen, Python-Datei angeben, Service erstellen. Erweiterte Felder sind optional.",
+        text="Simple mode: choose a project folder, enter a Python file, and create the service. Advanced fields are optional.",
         fg=COLORS["muted"],
         bg=COLORS["bg"],
         font=FONT_MAIN,
@@ -1260,9 +1242,9 @@ def service_assistant_window():
     simple_frame = tk.Frame(content, bg=COLORS["bg"])
     simple_frame.pack(fill=tk.X)
 
-    name_entry = add_field(simple_frame, "name", "Projektname", "So erscheint der Dienst im Panel, z.B. Web App")
+    name_entry = add_field(simple_frame, "name", "Project name", "This is how the service appears in the panel, e.g. Web App")
 
-    tk.Label(simple_frame, text="Projektordner", fg=COLORS["text"], bg=COLORS["bg"], font=FONT_BOLD).pack(anchor="w", pady=(8, 0))
+    tk.Label(simple_frame, text="Project folder", fg=COLORS["text"], bg=COLORS["bg"], font=FONT_BOLD).pack(anchor="w", pady=(8, 0))
     folder_row = tk.Frame(simple_frame, bg=COLORS["bg"])
     folder_row.pack(fill=tk.X, pady=(3, 0))
     workdir_entry = create_entry(folder_row, width=58)
@@ -1270,7 +1252,7 @@ def service_assistant_window():
     fields["workdir"] = workdir_entry
 
     def choose_folder():
-        selected = filedialog.askdirectory(title="Projektordner wählen")
+        selected = filedialog.askdirectory(title="Choose project folder")
         if not selected:
             return
         workdir_entry.delete(0, tk.END)
@@ -1278,11 +1260,11 @@ def service_assistant_window():
         maybe_autofill_from_folder(selected)
         update_preview()
 
-    create_button(folder_row, text="Ordner wählen", width=14, command=choose_folder, variant="muted").pack(side=tk.LEFT, padx=(8, 0))
-    tk.Label(simple_frame, text="Beispiel: /home/pi/my-service", fg=COLORS["muted"], bg=COLORS["bg"], font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
+    create_button(folder_row, text="Choose folder", width=14, command=choose_folder, variant="muted").pack(side=tk.LEFT, padx=(8, 0))
+    tk.Label(simple_frame, text="Example: /home/pi/my-service", fg=COLORS["muted"], bg=COLORS["bg"], font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
 
-    script_entry = add_field(simple_frame, "script", "Python-Datei", "Meistens app.py oder main.py. Absoluter Pfad ist auch erlaubt.", "app.py")
-    url_entry = add_field(simple_frame, "url", "URL optional", "Für Webapps, z.B. http://127.0.0.1:5050")
+    script_entry = add_field(simple_frame, "script", "Python file", "Usually app.py or main.py. Absolute paths are also allowed.", "app.py")
+    url_entry = add_field(simple_frame, "url", "URL optional", "For web apps, e.g. http://127.0.0.1:5050")
 
     options_frame = tk.Frame(simple_frame, bg=COLORS["bg"])
     options_frame.pack(anchor="w", pady=(12, 0), fill=tk.X)
@@ -1292,9 +1274,9 @@ def service_assistant_window():
     add_panel_var = tk.BooleanVar(value=True)
 
     for text, var in [
-        ("Autostart aktivieren", enable_var),
-        ("Service nach Erstellung direkt starten", start_var),
-        ("Direkt zur Panel-Liste hinzufügen", add_panel_var),
+        ("Enable startup", enable_var),
+        ("Start service after creation", start_var),
+        ("Add directly to the panel list", add_panel_var),
     ]:
         cb = tk.Checkbutton(
             options_frame,
@@ -1313,13 +1295,13 @@ def service_assistant_window():
     advanced_frame = tk.Frame(content, bg=COLORS["panel"], padx=12, pady=10, highlightthickness=1, highlightbackground=COLORS["border"])
 
     current_user = os.environ.get("USER", "pi")
-    service_entry = add_field(advanced_frame, "service", "Service-Dateiname", "Optional. Wird automatisch aus dem Projektnamen erzeugt, z.B. web-app.service")
-    user_entry = add_field(advanced_frame, "user", "Linux-Benutzer", "Normalerweise: pi", current_user)
-    command_entry = add_field(advanced_frame, "command", "Startbefehl", "Optional. Wird automatisch gebaut: /usr/bin/python3 /pfad/app.py")
+    service_entry = add_field(advanced_frame, "service", "Service filename", "Optional. Automatically generated from the project name, e.g. web-app.service")
+    user_entry = add_field(advanced_frame, "user", "Linux user", "Usually: pi", current_user)
+    command_entry = add_field(advanced_frame, "command", "Start command", "Optional. Automatically built: /usr/bin/python3 /path/app.py")
 
     restart_row = tk.Frame(advanced_frame, bg=COLORS["panel"])
     restart_row.pack(anchor="w", pady=(8, 0), fill=tk.X)
-    tk.Label(restart_row, text="Restart-Verhalten", fg=COLORS["text"], bg=COLORS["panel"], font=FONT_BOLD).pack(anchor="w")
+    tk.Label(restart_row, text="Restart behavior", fg=COLORS["text"], bg=COLORS["panel"], font=FONT_BOLD).pack(anchor="w")
     restart_var = tk.StringVar(value="always")
     restart_menu = tk.OptionMenu(restart_row, restart_var, "always", "on-failure", "no")
     restart_menu.configure(bg=COLORS["button"], fg=COLORS["text"], activebackground=COLORS["button_hover"], activeforeground=COLORS["text"], relief=tk.FLAT, highlightthickness=0)
@@ -1330,13 +1312,13 @@ def service_assistant_window():
         if advanced_visible.get():
             advanced_frame.pack_forget()
             advanced_visible.set(False)
-            advanced_button.configure(text="Erweiterte Einstellungen anzeigen")
+            advanced_button.configure(text="Show advanced settings")
         else:
             advanced_frame.pack(fill=tk.X, pady=(12, 0))
             advanced_visible.set(True)
-            advanced_button.configure(text="Erweiterte Einstellungen ausblenden")
+            advanced_button.configure(text="Hide advanced settings")
 
-    advanced_button = create_button(content, text="Erweiterte Einstellungen anzeigen", width=30, command=toggle_advanced, variant="muted")
+    advanced_button = create_button(content, text="Show advanced settings", width=30, command=toggle_advanced, variant="muted")
     advanced_button.pack(anchor="w", pady=(12, 0))
 
     preview_box = scrolledtext.ScrolledText(
@@ -1360,7 +1342,7 @@ def service_assistant_window():
         value = value.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
         value = re.sub(r"[^a-z0-9_.@:-]+", "-", value).strip("-_.")
         if not value:
-            value = "meinprojekt"
+            value = "my-project"
         return normalize_service_filename(value)
 
     def maybe_autofill_from_folder(folder):
@@ -1369,7 +1351,7 @@ def service_assistant_window():
             return
 
         if not fields["name"].get().strip():
-            fields["name"].insert(0, os.path.basename(folder.rstrip(os.sep)) or "Mein Projekt")
+            fields["name"].insert(0, os.path.basename(folder.rstrip(os.sep)) or "My Project")
 
         candidates = ["app.py", "main.py", "server.py", "run.py"]
         for filename in candidates:
@@ -1397,19 +1379,19 @@ def service_assistant_window():
         command = fields["command"].get().strip()
 
         if not name:
-            return None, "Projektname fehlt."
+            return None, "Project name is missing."
         if any(has_line_break(value) for value in [name, workdir, script_path, user_name, command]):
-            return None, "Eingaben für die Service-Datei dürfen keine Zeilenumbrüche enthalten."
+            return None, "Inputs for the service file must not contain line breaks."
         if not is_valid_service_name(service_name):
-            return None, "Service-Dateiname ungültig. Beispiel: meinprojekt.service"
+            return None, "Invalid service filename. Example: my-project.service"
         if user_name and not is_valid_user_name(user_name):
-            return None, "Linux-Benutzer ungültig. Beispiel: pi oder root."
+            return None, "Invalid Linux user. Example: pi or root."
         if not workdir or not os.path.isdir(workdir):
-            return None, "Projektordner existiert nicht."
+            return None, "Project folder does not exist."
         if not script_path or not os.path.isfile(script_path):
-            return None, "Python-Datei wurde nicht gefunden. Beispiel: app.py oder /home/pi/projekt/app.py"
+            return None, "Python file was not found. Example: app.py or /home/pi/project/app.py"
         if url and not is_valid_url(url):
-            return None, "URL muss mit http:// oder https:// beginnen."
+            return None, "URL must start with http:// or https://."
         if not command:
             python_cmd = shutil.which("python3") or "/usr/bin/python3"
             command = f"{systemd_quote_arg(python_cmd)} {systemd_quote_arg(script_path)}"
@@ -1438,7 +1420,7 @@ def service_assistant_window():
         preview_box.config(state=tk.NORMAL)
         preview_box.delete("1.0", tk.END)
         if error:
-            preview_box.insert(tk.END, f"Vorschau noch nicht vollständig:\n{error}")
+            preview_box.insert(tk.END, f"Preview is not complete yet:\n{error}")
         else:
             preview_box.insert(tk.END, data["unit_text"])
         preview_box.config(state=tk.DISABLED)
@@ -1450,12 +1432,12 @@ def service_assistant_window():
     def create_service():
         data, error = collect_data()
         if error:
-            messagebox.showwarning("Eingabe prüfen", error)
+            messagebox.showwarning("Check input", error)
             return
 
         if not messagebox.askyesno(
-            "Service erstellen",
-            f"Soll {data['service']} wirklich unter /etc/systemd/system erstellt werden?"
+            "Create service",
+            f"Create {data['service']} under /etc/systemd/system?"
         ):
             return
 
@@ -1488,45 +1470,45 @@ def service_assistant_window():
                 else:
                     services[existing_index] = item
                 if not save_services(services):
-                    return False, "Service wurde erstellt, aber nicht in services.json gespeichert."
+                    return False, "Service was created but could not be saved to services.json."
 
-            return True, "Service wurde erfolgreich erstellt."
+            return True, "Service was created successfully."
 
         def done(result):
             if isinstance(result, Exception):
-                messagebox.showerror("Service Assistent", str(result))
+                messagebox.showerror("Service Assistant", str(result))
                 return
             ok, msg = result
             if ok:
-                messagebox.showinfo("Service Assistent", msg)
+                messagebox.showinfo("Service Assistant", msg)
                 refresh_services()
                 close_assistant()
             else:
-                messagebox.showerror("Service Assistent", msg or "Erstellung fehlgeschlagen.")
+                messagebox.showerror("Service Assistant", msg or "Creation failed.")
 
         run_background(task, done)
 
-    create_button(button_bar, text="Abbrechen", command=close_assistant, width=12, variant="muted").pack(side=tk.RIGHT, padx=6)
-    create_button(button_bar, text="Service erstellen", command=create_service, width=20, variant="success").pack(side=tk.RIGHT, padx=6)
+    create_button(button_bar, text="Cancel", command=close_assistant, width=12, variant="muted").pack(side=tk.RIGHT, padx=6)
+    create_button(button_bar, text="Create service", command=create_service, width=20, variant="success").pack(side=tk.RIGHT, padx=6)
 
     update_preview()
 
 def add_project_window():
-    project_form("Service hinzufügen")
+    project_form("Add service")
 
 
 def edit_service_by_index(index):
     services = load_services()
 
     if 0 <= index < len(services):
-        project_form("Service bearbeiten", services[index], index)
+        project_form("Edit service", services[index], index)
 
 
 def edit_project_window():
     services = load_services()
 
     win = tk.Toplevel(root)
-    win.title("Service bearbeiten")
+    win.title("Edit service")
     win.geometry("430x270")
     win.configure(bg=COLORS["bg"])
 
@@ -1554,14 +1536,14 @@ def edit_project_window():
 
     listbox.bind("<Double-Button-1>", edit_selected)
 
-    create_button(win, text="Bearbeiten", width=18, command=edit_selected).pack(pady=10)
+    create_button(win, text="Edit", width=18, command=edit_selected).pack(pady=10)
 
 
 def delete_project_window():
     services = load_services()
 
     win = tk.Toplevel(root)
-    win.title("Service entfernen")
+    win.title("Remove service")
     win.geometry("430x270")
     win.configure(bg=COLORS["bg"])
 
@@ -1586,11 +1568,11 @@ def delete_project_window():
         index = selection[0]
         name = services[index].get("name", "Unbenannt")
 
-        if messagebox.askyesno("Entfernen", f"{name} wirklich aus der Liste entfernen?"):
+        if messagebox.askyesno("Remove", f"Remove {name} from the list?"):
             try:
                 services.pop(index)
             except IndexError:
-                messagebox.showerror("Entfernen fehlgeschlagen", "Der ausgewählte Service existiert nicht mehr.")
+                messagebox.showerror("Remove failed", "The selected service no longer exists.")
                 return
 
             if not save_services(services):
@@ -1599,7 +1581,7 @@ def delete_project_window():
             refresh_services()
             win.destroy()
 
-    create_button(win, text="Entfernen", width=18, command=delete_selected).pack(pady=10)
+    create_button(win, text="Remove", width=18, command=delete_selected).pack(pady=10)
 
 
 def create_info_card(parent, title, value, color):
@@ -1633,7 +1615,7 @@ def load_logo(parent):
         return
 
     if Image is None or ImageTk is None:
-        print("Pillow fehlt. Logo wird nicht geladen.")
+        print("Pillow is missing. Logo will not be loaded.")
         return
 
     try:
@@ -1647,7 +1629,7 @@ def load_logo(parent):
         logo_label.pack(side=tk.LEFT, padx=(10, 14))
 
     except Exception as e:
-        print("Logo konnte nicht geladen werden:", e)
+        print("Logo could not be loaded:", e)
 
 
 def add_header():
@@ -1657,7 +1639,7 @@ def add_header():
     columns = [
         ("Service", "service", 0),
         ("Status", "status", 1),
-        ("Autostart", "autostart", 2),
+        ("Startup", "autostart", 2),
         ("Uptime", "uptime", 3),
         ("Aktionen", "actions", 4),
     ]
@@ -1711,7 +1693,7 @@ def collect_service_snapshot(services, filter_text):
             "uptime": uptime,
         })
 
-    summary = f"{len(services)} Services · {active} aktiv · {inactive} inaktiv · {failed} failed"
+    summary = f"{len(services)} services · {active} active · {inactive} inactive · {failed} failed"
     return rows, summary
 
 
@@ -1726,6 +1708,17 @@ def render_service_snapshot(rows, summary, generation):
 
     if service_count_label:
         service_count_label.config(text=summary)
+
+    if not rows:
+        tk.Label(
+            service_frame,
+            text="No services configured yet. Add a service to get started.",
+            fg=COLORS["muted"],
+            bg=COLORS["panel"],
+            font=FONT_MAIN,
+            anchor="w"
+        ).pack(fill=tk.X, padx=18, pady=18)
+        return
 
     for item in rows:
         index = item["index"]
@@ -1755,10 +1748,10 @@ def render_service_snapshot(rows, summary, generation):
 
         if enabled == "enabled":
             enabled_color = COLORS["success"]
-            enabled_text = "an"
+            enabled_text = "on"
         elif enabled == "disabled":
             enabled_color = COLORS["danger"]
-            enabled_text = "aus"
+            enabled_text = "off"
 
         row = tk.Frame(service_frame, bg=row_bg)
         row.pack(fill=tk.X, padx=10, pady=5)
@@ -1793,14 +1786,14 @@ def render_service_snapshot(rows, summary, generation):
         create_button(actions_frame, text="Stop", width=7, variant="danger", command=lambda s=service: control_service("stop", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
         create_button(actions_frame, text="Restart", width=8, variant="warning", command=lambda s=service: control_service("restart", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
         create_button(actions_frame, text="Logs", width=7, variant="accent", command=lambda s=service: show_logs(s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
-        create_button(actions_frame, text="Auto an", width=8, variant="success", command=lambda s=service: control_autostart("enable", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
-        create_button(actions_frame, text="Auto aus", width=8, variant="danger", command=lambda s=service: control_autostart("disable", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Auto on", width=8, variant="success", command=lambda s=service: control_autostart("enable", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Auto off", width=8, variant="danger", command=lambda s=service: control_autostart("disable", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
 
         if url:
             create_button(actions_frame, text="URL", width=7, variant="accent", command=lambda u=url: open_url(u)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
 
         if path:
-            create_button(actions_frame, text="Ordner", width=8, variant="muted", command=lambda p=path: open_folder(p)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+            create_button(actions_frame, text="Folder", width=8, variant="muted", command=lambda p=path: open_folder(p)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
             create_button(actions_frame, text="Code", width=7, variant="accent", command=lambda p=path: open_code(p)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
 
 
@@ -1819,7 +1812,7 @@ def refresh_services():
         filter_text = search_var.get().lower() if search_var else ""
 
         if service_count_label:
-            service_count_label.config(text="Services werden geprüft...")
+            service_count_label.config(text="Checking services...")
 
         for widget in service_frame.winfo_children():
             widget.destroy()
@@ -1832,7 +1825,7 @@ def refresh_services():
             global refresh_running, refresh_pending
 
             if isinstance(result, Exception):
-                report_runtime_error("refresh", "Aktualisieren fehlgeschlagen", str(result))
+                report_runtime_error("refresh", "Refresh failed", str(result))
             else:
                 rows, summary = result
                 render_service_snapshot(rows, summary, generation)
@@ -1846,7 +1839,7 @@ def refresh_services():
 
     except Exception as e:
         refresh_running = False
-        report_runtime_error("refresh", "Aktualisieren fehlgeschlagen", str(e))
+        report_runtime_error("refresh", "Refresh failed", str(e))
 
 
 def auto_refresh_services():
@@ -1867,7 +1860,7 @@ def update_system_info():
         disk_value.config(text=get_disk_free())
 
     except Exception as e:
-        report_runtime_error("system_info", "Systeminfo Fehler", str(e))
+        report_runtime_error("system_info", "System Info Error", str(e))
 
     finally:
         try:
@@ -1901,7 +1894,7 @@ info_frame.pack(side=tk.LEFT, anchor="n")
 cpu_value = create_info_card(info_frame, "CPU", "0.0%", COLORS["success"])
 ram_value = create_info_card(info_frame, "RAM", "0.0%", COLORS["accent_2"])
 temp_value = create_info_card(info_frame, "TEMP", "N/A", COLORS["warning"])
-disk_value = create_info_card(info_frame, "DISK FREI", "N/A", COLORS["text"])
+disk_value = create_info_card(info_frame, "DISK FREE", "N/A", COLORS["text"])
 
 header_frame = tk.Frame(top_frame, bg=COLORS["bg"])
 header_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(26, 0), anchor="n")
@@ -1940,7 +1933,7 @@ tk.Label(
 
 service_count_label = tk.Label(
     meta_row,
-    text="Services werden geladen...",
+    text="Loading services...",
     fg=COLORS["accent"],
     bg=COLORS["bg"],
     font=("Arial", 10, "bold")
@@ -1954,7 +1947,7 @@ search_frame.pack(fill=tk.X, anchor="w", pady=(8, 0))
 
 tk.Label(
     search_frame,
-    text="Service suchen",
+    text="Search service",
     fg=COLORS["muted"],
     bg=COLORS["bg"],
     font=("Arial", 10, "bold")
@@ -1990,29 +1983,29 @@ bottom_frame.pack(fill=tk.X, padx=18, pady=(0, 7))
 button_frame = tk.Frame(bottom_frame, bg=COLORS["bg"])
 button_frame.pack(side=tk.TOP)
 
-refresh_button = create_button(button_frame, text="Aktualisieren", width=16, command=refresh_services)
+refresh_button = create_button(button_frame, text="Refresh", width=16, command=refresh_services)
 refresh_button.pack(side=tk.LEFT, padx=4)
-add_tooltip(refresh_button, "Service-Status neu laden")
+add_tooltip(refresh_button, "Reload service status")
 
 add_button = create_button(button_frame, text="+ Service", width=14, command=add_project_window)
 add_button.pack(side=tk.LEFT, padx=4)
-add_tooltip(add_button, "Bestehenden systemd-Service zur Liste hinzufügen")
+add_tooltip(add_button, "Add an existing systemd service to the list")
 
-assistant_button = create_button(button_frame, text="+ Assistent", width=14, command=service_assistant_window, variant="accent")
+assistant_button = create_button(button_frame, text="+ Assistant", width=14, command=service_assistant_window, variant="accent")
 assistant_button.pack(side=tk.LEFT, padx=4)
-add_tooltip(assistant_button, "Neuen systemd-Service per Assistent erstellen")
+add_tooltip(assistant_button, "Create a new systemd service with the assistant")
 
-diagnostics_button = create_button(button_frame, text="Diagnose", width=14, command=show_diagnostics_window, variant="warning")
+diagnostics_button = create_button(button_frame, text="Diagnostics", width=14, command=show_diagnostics_window, variant="warning")
 diagnostics_button.pack(side=tk.LEFT, padx=4)
-add_tooltip(diagnostics_button, "System- und Serviceinformationen anzeigen")
+add_tooltip(diagnostics_button, "Show system and service information")
 
-edit_button = create_button(button_frame, text="Bearbeiten", width=14, command=edit_project_window)
+edit_button = create_button(button_frame, text="Edit", width=14, command=edit_project_window)
 edit_button.pack(side=tk.LEFT, padx=4)
-add_tooltip(edit_button, "Eintrag aus der Service-Liste bearbeiten")
+add_tooltip(edit_button, "Edit an entry in the service list")
 
 delete_button = create_button(button_frame, text="- Service", width=14, command=delete_project_window)
 delete_button.pack(side=tk.LEFT, padx=4)
-add_tooltip(delete_button, "Eintrag aus der Service-Liste entfernen")
+add_tooltip(delete_button, "Remove an entry from the service list")
 
 footer_frame = tk.Frame(bottom_frame, bg=COLORS["bg"])
 footer_frame.pack(side=tk.TOP, pady=(6, 0))
