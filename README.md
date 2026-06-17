@@ -9,6 +9,10 @@ Manage Linux services from a modern GUI or directly from a terminal interface.
 
 Built for Raspberry Pi, Debian, Ubuntu and other Linux distributions.
 
+⚠️ Linux only
+
+This application requires systemd and is not compatible with Windows.
+
 Powered by PythonXP.
 
 ---
