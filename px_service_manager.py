@@ -36,8 +36,8 @@ VNC_SERVICES = [
     "wayvnc.service",
 ]
 
-APP_NAME = "PythonXP Service Manager CLI"
-APP_VERSION = "v0.8.3-cli"
+APP_NAME = "Linux Service Center CLI"
+APP_VERSION = "v1.0.0-cli"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
