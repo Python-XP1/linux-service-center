@@ -57,11 +57,21 @@ LOGO_CANDIDATES = [
     os.path.join(BASE_DIR, "logo.png"),
 ]
 
-APP_VERSION = "v0.8.8"
+APP_VERSION = "v0.9.1"
+APP_NAME = "Linux Service Center"
+APP_BRANDING = "powered by PythonXP"
 GITHUB_URL = "https://github.com/Python-XP1"
 PATREON_URL = "https://www.patreon.com/PythonXP"
 
 COMMAND_TIMEOUT = 10
+SERVICE_GRID_COLUMNS = {
+    "service": 250,
+    "status": 110,
+    "autostart": 110,
+    "uptime": 90,
+    "actions": 720,
+}
+ACTION_BUTTON_PADX = 2
 
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
 USER_NAME_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_.-]*[$]?|[0-9]+)$")
@@ -204,6 +214,48 @@ def create_link_label(parent, text, command):
     label.bind("<Enter>", on_enter)
     label.bind("<Leave>", on_leave)
     return label
+
+
+class ToolTip:
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.window = None
+        widget.bind("<Enter>", self.show, add="+")
+        widget.bind("<Leave>", self.hide, add="+")
+        widget.bind("<ButtonPress>", self.hide, add="+")
+
+    def show(self, event=None):
+        if self.window or not self.text:
+            return
+
+        x = self.widget.winfo_rootx() + 12
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 8
+        self.window = tk.Toplevel(self.widget)
+        self.window.wm_overrideredirect(True)
+        self.window.wm_geometry(f"+{x}+{y}")
+
+        tk.Label(
+            self.window,
+            text=self.text,
+            bg="#020617",
+            fg=COLORS["text"],
+            relief=tk.SOLID,
+            bd=1,
+            padx=8,
+            pady=4,
+            font=FONT_SMALL
+        ).pack()
+
+    def hide(self, event=None):
+        if self.window:
+            self.window.destroy()
+            self.window = None
+
+
+def add_tooltip(widget, text):
+    ToolTip(widget, text)
+    return widget
 
 
 def format_service_summary(services):
@@ -1208,7 +1260,7 @@ def service_assistant_window():
     simple_frame = tk.Frame(content, bg=COLORS["bg"])
     simple_frame.pack(fill=tk.X)
 
-    name_entry = add_field(simple_frame, "name", "Projektname", "So erscheint der Dienst im Panel, z.B. Einkaufsliste")
+    name_entry = add_field(simple_frame, "name", "Projektname", "So erscheint der Dienst im Panel, z.B. Web App")
 
     tk.Label(simple_frame, text="Projektordner", fg=COLORS["text"], bg=COLORS["bg"], font=FONT_BOLD).pack(anchor="w", pady=(8, 0))
     folder_row = tk.Frame(simple_frame, bg=COLORS["bg"])
@@ -1227,7 +1279,7 @@ def service_assistant_window():
         update_preview()
 
     create_button(folder_row, text="Ordner wählen", width=14, command=choose_folder, variant="muted").pack(side=tk.LEFT, padx=(8, 0))
-    tk.Label(simple_frame, text="Beispiel: /home/pi/Einkaufsliste", fg=COLORS["muted"], bg=COLORS["bg"], font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
+    tk.Label(simple_frame, text="Beispiel: /home/pi/my-service", fg=COLORS["muted"], bg=COLORS["bg"], font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
 
     script_entry = add_field(simple_frame, "script", "Python-Datei", "Meistens app.py oder main.py. Absoluter Pfad ist auch erlaubt.", "app.py")
     url_entry = add_field(simple_frame, "url", "URL optional", "Für Webapps, z.B. http://127.0.0.1:5050")
@@ -1261,7 +1313,7 @@ def service_assistant_window():
     advanced_frame = tk.Frame(content, bg=COLORS["panel"], padx=12, pady=10, highlightthickness=1, highlightbackground=COLORS["border"])
 
     current_user = os.environ.get("USER", "pi")
-    service_entry = add_field(advanced_frame, "service", "Service-Dateiname", "Optional. Wird automatisch aus dem Projektnamen erzeugt, z.B. einkaufsliste.service")
+    service_entry = add_field(advanced_frame, "service", "Service-Dateiname", "Optional. Wird automatisch aus dem Projektnamen erzeugt, z.B. web-app.service")
     user_entry = add_field(advanced_frame, "user", "Linux-Benutzer", "Normalerweise: pi", current_user)
     command_entry = add_field(advanced_frame, "command", "Startbefehl", "Optional. Wird automatisch gebaut: /usr/bin/python3 /pfad/app.py")
 
@@ -1478,8 +1530,14 @@ def edit_project_window():
     win.geometry("430x270")
     win.configure(bg=COLORS["bg"])
 
-    listbox = create_listbox(win, width=46)
-    listbox.pack(padx=20, pady=20, fill=tk.BOTH, expand=True)
+    list_frame = tk.Frame(win, bg=COLORS["bg"])
+    list_frame.pack(padx=20, pady=20, fill=tk.BOTH, expand=True)
+    scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+    listbox = create_listbox(list_frame, width=46)
+    listbox.configure(yscrollcommand=scrollbar.set)
+    scrollbar.configure(command=listbox.yview)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     for item in services:
         listbox.insert(tk.END, item.get("name", "Unbenannt"))
@@ -1507,8 +1565,14 @@ def delete_project_window():
     win.geometry("430x270")
     win.configure(bg=COLORS["bg"])
 
-    listbox = create_listbox(win, width=46)
-    listbox.pack(padx=20, pady=20, fill=tk.BOTH, expand=True)
+    list_frame = tk.Frame(win, bg=COLORS["bg"])
+    list_frame.pack(padx=20, pady=20, fill=tk.BOTH, expand=True)
+    scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+    listbox = create_listbox(list_frame, width=46)
+    listbox.configure(yscrollcommand=scrollbar.set)
+    scrollbar.configure(command=listbox.yview)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     for item in services:
         listbox.insert(tk.END, item.get("name", "Unbenannt"))
@@ -1574,13 +1638,13 @@ def load_logo(parent):
 
     try:
         logo_img = Image.open(logo_path)
-        logo_img.thumbnail((90, 90))
+        logo_img.thumbnail((78, 78))
 
         logo_photo = ImageTk.PhotoImage(logo_img)
 
         logo_label = tk.Label(parent, image=logo_photo, bg=COLORS["bg"])
         logo_label.image = logo_photo
-        logo_label.pack(side=tk.LEFT, padx=15)
+        logo_label.pack(side=tk.LEFT, padx=(10, 14))
 
     except Exception as e:
         print("Logo konnte nicht geladen werden:", e)
@@ -1590,22 +1654,24 @@ def add_header():
     header = tk.Frame(service_frame, bg=COLORS["panel_2"])
     header.pack(fill=tk.X, padx=12, pady=(10, 5))
 
-    for text, width in [
-        ("Service", 20),
-        ("Status", 10),
-        ("Autostart", 11),
-        ("Uptime", 8),
-        ("Aktionen", 70)
-    ]:
+    columns = [
+        ("Service", "service", 0),
+        ("Status", "status", 1),
+        ("Autostart", "autostart", 2),
+        ("Uptime", "uptime", 3),
+        ("Aktionen", "actions", 4),
+    ]
+
+    for text, key, index in columns:
+        header.grid_columnconfigure(index, minsize=SERVICE_GRID_COLUMNS[key])
         tk.Label(
             header,
             text=text,
             fg=COLORS["text"],
             bg=COLORS["panel_2"],
             font=("Arial", 10, "bold"),
-            anchor="w",
-            width=width
-        ).pack(side=tk.LEFT, padx=5)
+            anchor="w"
+        ).grid(row=0, column=index, sticky="w", padx=8, pady=6)
 
 
 def collect_service_snapshot(services, filter_text):
@@ -1695,38 +1761,47 @@ def render_service_snapshot(rows, summary, generation):
             enabled_text = "aus"
 
         row = tk.Frame(service_frame, bg=row_bg)
-        row.pack(fill=tk.X, padx=12, pady=6)
+        row.pack(fill=tk.X, padx=10, pady=5)
         row.bind("<Double-Button-1>", lambda e, i=index: edit_service_by_index(i))
+        row.grid_columnconfigure(0, minsize=SERVICE_GRID_COLUMNS["service"])
+        row.grid_columnconfigure(1, minsize=SERVICE_GRID_COLUMNS["status"])
+        row.grid_columnconfigure(2, minsize=SERVICE_GRID_COLUMNS["autostart"])
+        row.grid_columnconfigure(3, minsize=SERVICE_GRID_COLUMNS["uptime"])
+        row.grid_columnconfigure(4, minsize=SERVICE_GRID_COLUMNS["actions"])
 
         status_icon = "▲" if status == "failed" else "●"
 
-        tk.Label(
-            row,
-            text=f"{status_icon}  {name}",
-            fg=status_color,
-            bg=row_bg,
-            font=("Arial", 13, "bold"),
-            anchor="w",
-            width=20
-        ).pack(side=tk.LEFT, padx=5)
+        def add_cell(column, text, color, font=("Arial", 11, "bold")):
+            tk.Label(
+                row,
+                text=text,
+                fg=color,
+                bg=row_bg,
+                font=font,
+                anchor="w"
+            ).grid(row=0, column=column, sticky="w", padx=8, pady=6)
 
-        tk.Label(row, text=status, fg=status_color, bg=row_bg, font=("Arial", 11, "bold"), anchor="w", width=10).pack(side=tk.LEFT, padx=5)
-        tk.Label(row, text=enabled_text, fg=enabled_color, bg=row_bg, font=("Arial", 11, "bold"), anchor="w", width=11).pack(side=tk.LEFT, padx=5)
-        tk.Label(row, text=uptime, fg=uptime_color(uptime), bg=row_bg, font=("Arial", 11, "bold"), anchor="w", width=8).pack(side=tk.LEFT, padx=5)
+        add_cell(0, f"{status_icon}  {name}", status_color, ("Arial", 13, "bold"))
+        add_cell(1, status, status_color)
+        add_cell(2, enabled_text, enabled_color)
+        add_cell(3, uptime, uptime_color(uptime))
 
-        create_button(row, text="Start", width=7, variant="success", command=lambda s=service: control_service("start", s)).pack(side=tk.LEFT, padx=2)
-        create_button(row, text="Stop", width=7, variant="danger", command=lambda s=service: control_service("stop", s)).pack(side=tk.LEFT, padx=2)
-        create_button(row, text="Restart", width=8, variant="warning", command=lambda s=service: control_service("restart", s)).pack(side=tk.LEFT, padx=2)
-        create_button(row, text="Logs", width=7, variant="accent", command=lambda s=service: show_logs(s)).pack(side=tk.LEFT, padx=2)
-        create_button(row, text="Auto an", width=8, variant="success", command=lambda s=service: control_autostart("enable", s)).pack(side=tk.LEFT, padx=2)
-        create_button(row, text="Auto aus", width=8, variant="danger", command=lambda s=service: control_autostart("disable", s)).pack(side=tk.LEFT, padx=2)
+        actions_frame = tk.Frame(row, bg=row_bg)
+        actions_frame.grid(row=0, column=4, sticky="w", padx=8, pady=4)
+
+        create_button(actions_frame, text="Start", width=7, variant="success", command=lambda s=service: control_service("start", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Stop", width=7, variant="danger", command=lambda s=service: control_service("stop", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Restart", width=8, variant="warning", command=lambda s=service: control_service("restart", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Logs", width=7, variant="accent", command=lambda s=service: show_logs(s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Auto an", width=8, variant="success", command=lambda s=service: control_autostart("enable", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Auto aus", width=8, variant="danger", command=lambda s=service: control_autostart("disable", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
 
         if url:
-            create_button(row, text="URL", width=7, variant="accent", command=lambda u=url: open_url(u)).pack(side=tk.LEFT, padx=2)
+            create_button(actions_frame, text="URL", width=7, variant="accent", command=lambda u=url: open_url(u)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
 
         if path:
-            create_button(row, text="Ordner", width=7, variant="muted", command=lambda p=path: open_folder(p)).pack(side=tk.LEFT, padx=2)
-            create_button(row, text="Code", width=7, variant="accent", command=lambda p=path: open_code(p)).pack(side=tk.LEFT, padx=2)
+            create_button(actions_frame, text="Ordner", width=8, variant="muted", command=lambda p=path: open_folder(p)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+            create_button(actions_frame, text="Code", width=7, variant="accent", command=lambda p=path: open_code(p)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
 
 
 def refresh_services():
@@ -1802,7 +1877,7 @@ def update_system_info():
 
 
 root = tk.Tk()
-root.title("PythonXP Service Control")
+root.title(APP_NAME)
 root.geometry("1280x720")
 root.minsize(1100, 650)
 root.configure(bg=COLORS["bg"])
@@ -1818,7 +1893,7 @@ except tk.TclError:
 
 # Compact top area: system cards on the left, branding/search on the right.
 top_frame = tk.Frame(root, bg=COLORS["bg"])
-top_frame.pack(fill=tk.X, padx=20, pady=(10, 4))
+top_frame.pack(fill=tk.X, padx=18, pady=(7, 3))
 
 info_frame = tk.Frame(top_frame, bg=COLORS["bg"])
 info_frame.pack(side=tk.LEFT, anchor="n")
@@ -1826,26 +1901,34 @@ info_frame.pack(side=tk.LEFT, anchor="n")
 cpu_value = create_info_card(info_frame, "CPU", "0.0%", COLORS["success"])
 ram_value = create_info_card(info_frame, "RAM", "0.0%", COLORS["accent_2"])
 temp_value = create_info_card(info_frame, "TEMP", "N/A", COLORS["warning"])
-disk_value = create_info_card(info_frame, "SSD FREI", "N/A", COLORS["text"])
+disk_value = create_info_card(info_frame, "DISK FREI", "N/A", COLORS["text"])
 
 header_frame = tk.Frame(top_frame, bg=COLORS["bg"])
-header_frame.pack(side=tk.LEFT, padx=(36, 0), anchor="n")
+header_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(26, 0), anchor="n")
 
 load_logo(header_frame)
 
 title_box = tk.Frame(header_frame, bg=COLORS["bg"])
-title_box.pack(side=tk.LEFT, anchor="n")
+title_box.pack(side=tk.LEFT, fill=tk.X, expand=True, anchor="n")
 
 tk.Label(
     title_box,
-    text="PythonXP Service Control",
+    text=APP_NAME,
     fg=COLORS["text"],
     bg=COLORS["bg"],
     font=FONT_TITLE
 ).pack(anchor="w")
 
+tk.Label(
+    title_box,
+    text=APP_BRANDING,
+    fg=COLORS["muted"],
+    bg=COLORS["bg"],
+    font=("Arial", 9)
+).pack(anchor="w")
+
 meta_row = tk.Frame(title_box, bg=COLORS["bg"])
-meta_row.pack(anchor="w", pady=(2, 0))
+meta_row.pack(anchor="w", pady=(1, 0))
 
 tk.Label(
     meta_row,
@@ -1867,7 +1950,7 @@ service_count_label.pack(side=tk.LEFT, padx=(14, 0))
 search_var = tk.StringVar()
 
 search_frame = tk.Frame(title_box, bg=COLORS["bg"])
-search_frame.pack(anchor="w", pady=(12, 0))
+search_frame.pack(fill=tk.X, anchor="w", pady=(8, 0))
 
 tk.Label(
     search_frame,
@@ -1877,33 +1960,66 @@ tk.Label(
     font=("Arial", 10, "bold")
 ).pack(anchor="w")
 
-search_entry = create_entry(search_frame, textvariable=search_var, width=45)
-search_entry.pack(pady=(3, 0))
+search_entry = create_entry(search_frame, textvariable=search_var, width=62)
+search_entry.pack(fill=tk.X, pady=(3, 0))
 search_entry.insert(0, "")
 search_entry.bind("<KeyRelease>", lambda e: refresh_services())
 
-service_frame = tk.Frame(root, bg=COLORS["panel"], highlightthickness=1, highlightbackground=COLORS["border"])
-service_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(4, 8))
+service_panel = tk.Frame(root, bg=COLORS["panel"], highlightthickness=1, highlightbackground=COLORS["border"])
+service_panel.pack(fill=tk.BOTH, expand=True, padx=18, pady=(3, 7))
+
+service_canvas = tk.Canvas(service_panel, bg=COLORS["panel"], highlightthickness=0, bd=0)
+service_scrollbar = tk.Scrollbar(service_panel, orient=tk.VERTICAL, command=service_canvas.yview)
+service_canvas.configure(yscrollcommand=service_scrollbar.set)
+service_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+service_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+service_frame = tk.Frame(service_canvas, bg=COLORS["panel"])
+service_window = service_canvas.create_window((0, 0), window=service_frame, anchor="nw")
+
+def update_service_scroll_region(event=None):
+    service_canvas.configure(scrollregion=service_canvas.bbox("all"))
+    service_canvas.itemconfigure(service_window, width=service_canvas.winfo_width())
+
+service_frame.bind("<Configure>", update_service_scroll_region)
+service_canvas.bind("<Configure>", update_service_scroll_region)
 
 bottom_frame = tk.Frame(root, bg=COLORS["bg"])
-bottom_frame.pack(fill=tk.X, padx=20, pady=(0, 8))
+bottom_frame.pack(fill=tk.X, padx=18, pady=(0, 7))
 
 button_frame = tk.Frame(bottom_frame, bg=COLORS["bg"])
 button_frame.pack(side=tk.TOP)
 
-create_button(button_frame, text="Aktualisieren", width=16, command=refresh_services).pack(side=tk.LEFT, padx=5)
-create_button(button_frame, text="+ Service", width=14, command=add_project_window).pack(side=tk.LEFT, padx=5)
-create_button(button_frame, text="+ Assistent", width=14, command=service_assistant_window, variant="accent").pack(side=tk.LEFT, padx=5)
-create_button(button_frame, text="Diagnose", width=14, command=show_diagnostics_window, variant="warning").pack(side=tk.LEFT, padx=5)
-create_button(button_frame, text="Bearbeiten", width=14, command=edit_project_window).pack(side=tk.LEFT, padx=5)
-create_button(button_frame, text="- Service", width=14, command=delete_project_window).pack(side=tk.LEFT, padx=5)
+refresh_button = create_button(button_frame, text="Aktualisieren", width=16, command=refresh_services)
+refresh_button.pack(side=tk.LEFT, padx=4)
+add_tooltip(refresh_button, "Service-Status neu laden")
+
+add_button = create_button(button_frame, text="+ Service", width=14, command=add_project_window)
+add_button.pack(side=tk.LEFT, padx=4)
+add_tooltip(add_button, "Bestehenden systemd-Service zur Liste hinzufügen")
+
+assistant_button = create_button(button_frame, text="+ Assistent", width=14, command=service_assistant_window, variant="accent")
+assistant_button.pack(side=tk.LEFT, padx=4)
+add_tooltip(assistant_button, "Neuen systemd-Service per Assistent erstellen")
+
+diagnostics_button = create_button(button_frame, text="Diagnose", width=14, command=show_diagnostics_window, variant="warning")
+diagnostics_button.pack(side=tk.LEFT, padx=4)
+add_tooltip(diagnostics_button, "System- und Serviceinformationen anzeigen")
+
+edit_button = create_button(button_frame, text="Bearbeiten", width=14, command=edit_project_window)
+edit_button.pack(side=tk.LEFT, padx=4)
+add_tooltip(edit_button, "Eintrag aus der Service-Liste bearbeiten")
+
+delete_button = create_button(button_frame, text="- Service", width=14, command=delete_project_window)
+delete_button.pack(side=tk.LEFT, padx=4)
+add_tooltip(delete_button, "Eintrag aus der Service-Liste entfernen")
 
 footer_frame = tk.Frame(bottom_frame, bg=COLORS["bg"])
-footer_frame.pack(side=tk.TOP, pady=(7, 0))
+footer_frame.pack(side=tk.TOP, pady=(6, 0))
 
 tk.Label(
     footer_frame,
-    text=f"PythonXP Service Control {APP_VERSION}  ·  ",
+    text=f"{APP_NAME} {APP_VERSION}  ·  {APP_BRANDING}  ·  ",
     fg=COLORS["muted"],
     bg=COLORS["bg"],
     font=("Arial", 9)
