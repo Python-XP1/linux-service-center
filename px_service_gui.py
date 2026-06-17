@@ -716,7 +716,7 @@ def show_diagnostics_window():
                     output.append(format_command_result(label, code, stdout, stderr))
                 except Exception as e:
                     output.append(f"$ {label}\nERROR: {e}\n\n")
-            output.append("Diagnostics completed.\n")
+            output.append("Diagnostics completed successfully\n")
 
             try:
                 root.after(0, lambda text="".join(output): finish_diagnostics(text))
