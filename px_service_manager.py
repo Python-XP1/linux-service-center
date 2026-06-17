@@ -29,7 +29,7 @@ DIAGNOSTIC_COMMANDS = [
 ]
 
 APP_NAME = "Linux Service Center CLI"
-APP_VERSION = "v0.9.2-cli"
+APP_VERSION = "v0.9.3-cli"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -130,6 +130,75 @@ def normalize_path(path):
     return os.path.abspath(os.path.expanduser(path.strip()))
 
 
+def resolve_venv_python(venv_path):
+    if not venv_path:
+        return ""
+    return os.path.join(venv_path, "bin", "python")
+
+
+def systemd_quote_arg(value):
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def split_command(command):
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return []
+
+
+def command_has_python_prefix(parts):
+    if not parts:
+        return False
+    executable = os.path.basename(parts[0])
+    return executable in {"python", "python3"} or executable.startswith("python3.")
+
+
+def build_python_exec_start(python_executable, start_command, script_path):
+    python_executable = normalize_path(python_executable) if python_executable else ""
+    command = start_command.strip()
+
+    if command:
+        parts = split_command(command)
+        if not parts:
+            return ""
+        if python_executable and command_has_python_prefix(parts):
+            parts[0] = python_executable
+            return " ".join(systemd_quote_arg(part) for part in parts)
+        if python_executable:
+            return " ".join([systemd_quote_arg(python_executable)] + [systemd_quote_arg(part) for part in parts])
+        return " ".join(systemd_quote_arg(part) for part in parts)
+
+    if not script_path:
+        return ""
+
+    python_cmd = python_executable or "/usr/bin/python3"
+    return f"{systemd_quote_arg(python_cmd)} {systemd_quote_arg(script_path)}"
+
+
+def validate_python_service_fields(workdir="", venv_path="", python_executable="", start_command=""):
+    if workdir:
+        workdir = normalize_path(workdir)
+        if not os.path.isdir(workdir):
+            return "Working directory does not exist."
+
+    if venv_path:
+        venv_path = normalize_path(venv_path)
+        venv_python = resolve_venv_python(venv_path)
+        if not os.path.isfile(venv_python):
+            return f"Virtualenv Python executable was not found: {venv_python}"
+
+    if python_executable:
+        python_executable = normalize_path(python_executable)
+        if not os.path.isfile(python_executable):
+            return "Python executable does not exist."
+
+    if "\n" in start_command or "\r" in start_command:
+        return "Start command must not contain line breaks."
+
+    return None
+
+
 def load_services():
     if not os.path.exists(CONFIG_FILE):
         return []
@@ -152,10 +221,17 @@ def load_services():
     for item in data:
         if not isinstance(item, dict):
             continue
+        path = str(item.get("path", "")).strip()
+        workdir = str(item.get("workdir", "")).strip()
+
         services.append({
             "name": str(item.get("name", "")).strip(),
             "service": str(item.get("service", "")).strip(),
-            "path": str(item.get("path", "")).strip(),
+            "path": path,
+            "workdir": workdir,
+            "venv_path": str(item.get("venv_path", "")).strip(),
+            "python_executable": str(item.get("python_executable", "")).strip(),
+            "start_command": str(item.get("start_command", "")).strip(),
             "url": str(item.get("url", "")).strip(),
         })
     return services
@@ -378,8 +454,24 @@ def add_service_manual():
     if service_input is None:
         return
 
-    path_input = read_input("Folder optional: ")
+    path_input = read_input("Folder/path optional: ")
     if path_input is None:
+        return
+
+    workdir_input = read_input("Working directory optional: ")
+    if workdir_input is None:
+        return
+
+    venv_input = read_input("Virtualenv path optional, example /path/to/project/.venv: ")
+    if venv_input is None:
+        return
+
+    python_input = read_input("Python executable optional, example /path/to/project/.venv/bin/python: ")
+    if python_input is None:
+        return
+
+    start_command = read_input("Start command optional, example app.py or python app.py: ")
+    if start_command is None:
         return
 
     url = read_input("URL optional: ")
@@ -388,6 +480,9 @@ def add_service_manual():
 
     service = normalize_service_name(service_input)
     path = normalize_path(path_input)
+    workdir = normalize_path(workdir_input)
+    venv_path = normalize_path(venv_input)
+    python_executable = normalize_path(python_input)
 
     if not name or not valid_service_name(service):
         print(c("Missing name or invalid service name.", RED))
@@ -396,6 +491,12 @@ def add_service_manual():
 
     if url and not valid_url(url):
         print(c("URL must start with http:// or https://.", RED))
+        pause()
+        return
+
+    validation_error = validate_python_service_fields(workdir, venv_path, python_executable, start_command)
+    if validation_error:
+        print(c(validation_error, RED))
         pause()
         return
 
@@ -409,7 +510,11 @@ def add_service_manual():
     services.append({
         "name": name,
         "service": service,
-        "path": path,
+        "path": path or workdir,
+        "workdir": workdir,
+        "venv_path": venv_path,
+        "python_executable": python_executable,
+        "start_command": start_command,
         "url": url
     })
 
@@ -533,6 +638,28 @@ def service_assistant():
         pause()
         return
 
+    detected_venv = os.path.join(project_dir, ".venv")
+    if not os.path.isfile(resolve_venv_python(detected_venv)):
+        detected_venv = ""
+
+    venv_path = read_input(
+        f"Virtualenv path optional [{detected_venv}]: " if detected_venv else "Virtualenv path optional: ",
+        default=detected_venv
+    )
+    if venv_path is None:
+        return
+
+    venv_path = normalize_path(venv_path)
+
+    if venv_path:
+        venv_python = resolve_venv_python(venv_path)
+        if not os.path.isfile(venv_python):
+            print(c(f"Virtualenv Python executable not found: {venv_python}", RED))
+            pause()
+            return
+    else:
+        venv_python = ""
+
     py_file = read_input("Python file in folder [app.py]: ", default="app.py")
     if py_file is None:
         return
@@ -544,6 +671,31 @@ def service_assistant():
 
     if not os.path.isfile(py_path):
         print(c(f"Python file not found: {py_path}", RED))
+        pause()
+        return
+
+    python_default = venv_python
+    python_executable = read_input(
+        f"Python executable optional [{python_default}]: " if python_default else "Python executable optional: ",
+        default=python_default
+    )
+    if python_executable is None:
+        return
+
+    python_executable = normalize_path(python_executable)
+
+    if python_executable and not os.path.isfile(python_executable):
+        print(c("Python executable does not exist.", RED))
+        pause()
+        return
+
+    start_command = read_input("Start command optional, example app.py or python app.py: ", default="")
+    if start_command is None:
+        return
+
+    validation_error = validate_python_service_fields(project_dir, venv_path, python_executable, start_command)
+    if validation_error:
+        print(c(validation_error, RED))
         pause()
         return
 
@@ -600,7 +752,12 @@ def service_assistant():
     autostart = autostart_input.lower() != "n"
     start_now = start_now_input.lower() == "y"
 
-    exec_start = f"/usr/bin/python3 {shlex.quote(py_path)}"
+    exec_start = build_python_exec_start(python_executable, start_command, py_path)
+    if not exec_start:
+        print(c("Start command could not be built.", RED))
+        pause()
+        return
+
     unit_content = make_unit_content(project_name, user, project_dir, exec_start, restart)
     unit_path = f"/etc/systemd/system/{service}"
 
@@ -665,6 +822,10 @@ def service_assistant():
             "name": project_name,
             "service": service,
             "path": project_dir,
+            "workdir": project_dir,
+            "venv_path": venv_path,
+            "python_executable": python_executable,
+            "start_command": start_command or py_file,
             "url": url
         })
 

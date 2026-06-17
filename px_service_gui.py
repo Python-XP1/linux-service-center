@@ -7,6 +7,7 @@ import psutil
 import time
 import re
 import shutil
+import shlex
 import tempfile
 import threading
 from urllib.parse import urlparse
@@ -57,7 +58,7 @@ LOGO_CANDIDATES = [
     os.path.join(BASE_DIR, "logo.png"),
 ]
 
-APP_VERSION = "v0.9.2"
+APP_VERSION = "v0.9.3"
 APP_NAME = "Linux Service Center"
 APP_BRANDING = "powered by PythonXP"
 GITHUB_URL = "https://github.com/Python-XP1"
@@ -304,10 +305,17 @@ def load_services():
         if not isinstance(item, dict):
             continue
 
+        path = str(item.get("path", "")).strip()
+        workdir = str(item.get("workdir", "")).strip()
+
         services.append({
             "name": str(item.get("name", "")).strip(),
             "service": str(item.get("service", "")).strip(),
-            "path": str(item.get("path", "")).strip(),
+            "path": path,
+            "workdir": workdir,
+            "venv_path": str(item.get("venv_path", "")).strip(),
+            "python_executable": str(item.get("python_executable", "")).strip(),
+            "start_command": str(item.get("start_command", "")).strip(),
             "url": str(item.get("url", "")).strip(),
         })
 
@@ -407,6 +415,51 @@ def normalize_path(path):
     return os.path.abspath(os.path.expanduser(path))
 
 
+def resolve_venv_python(venv_path):
+    if not venv_path:
+        return ""
+    return os.path.join(venv_path, "bin", "python")
+
+
+def split_command(command):
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return []
+
+
+def command_has_python_prefix(parts):
+    if not parts:
+        return False
+    executable = os.path.basename(parts[0])
+    return executable in {"python", "python3"} or executable.startswith("python3.")
+
+
+def build_python_exec_start(python_executable, start_command, script_path):
+    python_executable = normalize_path(python_executable) if python_executable else ""
+    command = start_command.strip()
+
+    if command:
+        parts = split_command(command)
+        if not parts:
+            return ""
+        if python_executable and command_has_python_prefix(parts):
+            parts[0] = python_executable
+            return " ".join(systemd_quote_arg(part) for part in parts)
+        if python_executable:
+            return " ".join([systemd_quote_arg(python_executable)] + [systemd_quote_arg(part) for part in parts])
+        return " ".join(systemd_quote_arg(part) for part in parts)
+
+    if not script_path:
+        return ""
+
+    if python_executable:
+        return f"{systemd_quote_arg(python_executable)} {systemd_quote_arg(script_path)}"
+
+    python_cmd = shutil.which("python3") or "/usr/bin/python3"
+    return f"{systemd_quote_arg(python_cmd)} {systemd_quote_arg(script_path)}"
+
+
 def validate_service_config(item):
     if not item["name"] or not item["service"]:
         return "Display name and systemd service are required."
@@ -419,6 +472,25 @@ def validate_service_config(item):
 
     if item["path"]:
         item["path"] = normalize_path(item["path"])
+
+    if item.get("workdir"):
+        item["workdir"] = normalize_path(item["workdir"])
+        if not os.path.isdir(item["workdir"]):
+            return "The working directory does not exist."
+
+    if item.get("venv_path"):
+        item["venv_path"] = normalize_path(item["venv_path"])
+        venv_python = resolve_venv_python(item["venv_path"])
+        if not os.path.isfile(venv_python):
+            return f"The virtualenv Python executable was not found: {venv_python}"
+
+    if item.get("python_executable"):
+        item["python_executable"] = normalize_path(item["python_executable"])
+        if not os.path.isfile(item["python_executable"]):
+            return "The Python executable does not exist."
+
+    if item.get("start_command") and has_line_break(item["start_command"]):
+        return "The start command must not contain line breaks."
 
     return None
 
@@ -928,20 +1000,26 @@ def browse_services(target_entry):
 def project_form(title_text, existing=None, index=None):
     win = tk.Toplevel(root)
     win.title(title_text)
-    win.geometry("520x430")
+    win.geometry("620x690")
+    win.minsize(560, 640)
     win.configure(bg=COLORS["bg"])
 
     fields = {}
 
-    tk.Label(win, text="Display name", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
-    fields["name"] = create_entry(win, width=60)
-    fields["name"].pack(padx=20, pady=3)
-    fields["name"].insert(0, existing.get("name", "") if existing else "")
+    def add_form_field(key, label, value="", hint=""):
+        tk.Label(win, text=label, fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(8, 0))
+        entry = create_entry(win, width=70)
+        entry.pack(padx=20, pady=3, fill=tk.X)
+        if value:
+            entry.insert(0, value)
+        if hint:
+            tk.Label(win, text=hint, fg=COLORS["muted"], bg=COLORS["bg"], font=("Arial", 9)).pack(anchor="w", padx=20)
+        fields[key] = entry
+        return entry
 
-    tk.Label(win, text="Systemd Service", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
-    fields["service"] = create_entry(win, width=60)
-    fields["service"].pack(padx=20, pady=3)
-    fields["service"].insert(0, existing.get("service", "") if existing else "")
+    add_form_field("name", "Display name", existing.get("name", "") if existing else "")
+
+    add_form_field("service", "Systemd Service", existing.get("service", "") if existing else "")
 
     tk.Label(
         win,
@@ -958,23 +1036,46 @@ def project_form(title_text, existing=None, index=None):
         command=lambda: browse_services(fields["service"])
     ).pack(pady=6)
 
-    tk.Label(win, text="Folder/path optional", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
-    fields["path"] = create_entry(win, width=60)
-    fields["path"].pack(padx=20, pady=3)
-    fields["path"].insert(0, existing.get("path", "") if existing else "")
-
-    tk.Label(win, text="URL optional", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(10, 0))
-    fields["url"] = create_entry(win, width=60)
-    fields["url"].pack(padx=20, pady=3)
-    fields["url"].insert(0, existing.get("url", "") if existing else "")
+    add_form_field("path", "Folder/path optional", existing.get("path", "") if existing else "")
+    add_form_field(
+        "workdir",
+        "Working directory optional",
+        existing.get("workdir", "") if existing else "",
+        "Used as WorkingDirectory= when a systemd service is generated."
+    )
+    add_form_field(
+        "venv_path",
+        "Virtualenv path optional",
+        existing.get("venv_path", "") if existing else "",
+        "Example: /path/to/project/.venv"
+    )
+    add_form_field(
+        "python_executable",
+        "Python executable optional",
+        existing.get("python_executable", "") if existing else "",
+        "Example: /path/to/project/.venv/bin/python"
+    )
+    add_form_field(
+        "start_command",
+        "Start command optional",
+        existing.get("start_command", "") if existing else "",
+        "Example: app.py or python app.py"
+    )
+    add_form_field("url", "URL optional", existing.get("url", "") if existing else "")
 
     def save_project():
         services = load_services()
+        path = fields["path"].get().strip()
+        workdir = fields["workdir"].get().strip()
 
         item = {
             "name": fields["name"].get().strip(),
             "service": fields["service"].get().strip(),
-            "path": fields["path"].get().strip(),
+            "path": path or workdir,
+            "workdir": workdir,
+            "venv_path": fields["venv_path"].get().strip(),
+            "python_executable": fields["python_executable"].get().strip(),
+            "start_command": fields["start_command"].get().strip(),
             "url": fields["url"].get().strip()
         }
 
@@ -1218,7 +1319,7 @@ def service_assistant_window():
 
     tk.Label(
         content,
-        text="Simple mode: choose a project folder, enter a Python file, and create the service. Advanced fields are optional.",
+        text="Simple mode: choose a project folder, enter a Python file, and create the service. Virtualenv and advanced fields are optional.",
         fg=COLORS["muted"],
         bg=COLORS["bg"],
         font=FONT_MAIN,
@@ -1263,6 +1364,7 @@ def service_assistant_window():
     create_button(folder_row, text="Choose folder", width=14, command=choose_folder, variant="muted").pack(side=tk.LEFT, padx=(8, 0))
     tk.Label(simple_frame, text="Example: /home/pi/my-service", fg=COLORS["muted"], bg=COLORS["bg"], font=FONT_SMALL).pack(anchor="w", pady=(2, 0))
 
+    venv_entry = add_field(simple_frame, "venv_path", "Virtualenv path optional", "If set, the assistant uses <venv>/bin/python when possible.")
     script_entry = add_field(simple_frame, "script", "Python file", "Usually app.py or main.py. Absolute paths are also allowed.", "app.py")
     url_entry = add_field(simple_frame, "url", "URL optional", "For web apps, e.g. http://127.0.0.1:5050")
 
@@ -1297,7 +1399,8 @@ def service_assistant_window():
     current_user = os.environ.get("USER", "pi")
     service_entry = add_field(advanced_frame, "service", "Service filename", "Optional. Automatically generated from the project name, e.g. web-app.service")
     user_entry = add_field(advanced_frame, "user", "Linux user", "Usually: pi", current_user)
-    command_entry = add_field(advanced_frame, "command", "Start command", "Optional. Automatically built: /usr/bin/python3 /path/app.py")
+    python_entry = add_field(advanced_frame, "python_executable", "Python executable", "Optional. Example: /path/to/project/.venv/bin/python")
+    command_entry = add_field(advanced_frame, "start_command", "Start command", "Optional. Example: app.py or python app.py")
 
     restart_row = tk.Frame(advanced_frame, bg=COLORS["panel"])
     restart_row.pack(anchor="w", pady=(8, 0), fill=tk.X)
@@ -1360,6 +1463,14 @@ def service_assistant_window():
                 fields["script"].insert(0, filename)
                 break
 
+        venv_path = os.path.join(folder, ".venv")
+        venv_python = resolve_venv_python(venv_path)
+        if os.path.isfile(venv_python):
+            if not fields["venv_path"].get().strip():
+                fields["venv_path"].insert(0, venv_path)
+            if not fields["python_executable"].get().strip():
+                fields["python_executable"].insert(0, venv_python)
+
     def resolve_script_path(workdir, script_value):
         script_value = script_value.strip()
         if not script_value:
@@ -1371,16 +1482,19 @@ def service_assistant_window():
     def collect_data():
         name = fields["name"].get().strip()
         workdir = normalize_path(fields["workdir"].get().strip())
-        script_path = resolve_script_path(workdir, fields["script"].get().strip())
+        script_value = fields["script"].get().strip()
+        script_path = resolve_script_path(workdir, script_value)
+        venv_path = normalize_path(fields["venv_path"].get().strip())
+        python_executable = normalize_path(fields["python_executable"].get().strip())
+        start_command = fields["start_command"].get().strip()
         url = fields["url"].get().strip()
         service_name = normalize_service_filename(fields["service"].get().strip()) if fields["service"].get().strip() else slugify_service_name(name)
         user_name = fields["user"].get().strip()
         restart_policy = restart_var.get()
-        command = fields["command"].get().strip()
 
         if not name:
             return None, "Project name is missing."
-        if any(has_line_break(value) for value in [name, workdir, script_path, user_name, command]):
+        if any(has_line_break(value) for value in [name, workdir, script_path, venv_path, python_executable, user_name, start_command]):
             return None, "Inputs for the service file must not contain line breaks."
         if not is_valid_service_name(service_name):
             return None, "Invalid service filename. Example: my-project.service"
@@ -1388,13 +1502,21 @@ def service_assistant_window():
             return None, "Invalid Linux user. Example: pi or root."
         if not workdir or not os.path.isdir(workdir):
             return None, "Project folder does not exist."
-        if not script_path or not os.path.isfile(script_path):
+        if venv_path:
+            venv_python = resolve_venv_python(venv_path)
+            if not os.path.isfile(venv_python):
+                return None, f"Virtualenv Python executable was not found: {venv_python}"
+            if not python_executable:
+                python_executable = venv_python
+        if python_executable and not os.path.isfile(python_executable):
+            return None, "Python executable does not exist."
+        if not start_command and (not script_path or not os.path.isfile(script_path)):
             return None, "Python file was not found. Example: app.py or /home/pi/project/app.py"
         if url and not is_valid_url(url):
             return None, "URL must start with http:// or https://."
+        command = build_python_exec_start(python_executable, start_command, script_path)
         if not command:
-            python_cmd = shutil.which("python3") or "/usr/bin/python3"
-            command = f"{systemd_quote_arg(python_cmd)} {systemd_quote_arg(script_path)}"
+            return None, "Start command could not be built."
 
         unit_text = build_service_unit(
             description=name,
@@ -1408,6 +1530,10 @@ def service_assistant_window():
             "name": name,
             "service": service_name,
             "path": workdir,
+            "workdir": workdir,
+            "venv_path": venv_path,
+            "python_executable": python_executable,
+            "start_command": start_command or script_value,
             "url": url,
             "unit_text": unit_text,
             "enable": enable_var.get(),
@@ -1462,6 +1588,10 @@ def service_assistant_window():
                     "name": data["name"],
                     "service": data["service"],
                     "path": data["path"],
+                    "workdir": data["workdir"],
+                    "venv_path": data["venv_path"],
+                    "python_executable": data["python_executable"],
+                    "start_command": data["start_command"],
                     "url": data["url"],
                 }
                 existing_index = next((i for i, s in enumerate(services) if s.get("service") == data["service"]), None)

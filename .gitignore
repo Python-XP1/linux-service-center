@@ -27,7 +27,6 @@ codex_copy.txt
 Thumbs.db
 .codex
 .agents
-.stfolder
 
 # Syncthing metadata and conflict copies
 .stfolder/
