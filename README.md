@@ -13,6 +13,8 @@ Built for Raspberry Pi, Debian, Ubuntu and other Linux distributions.
 
 This application requires systemd and is not compatible with Windows.
 
+⚠️ Linux Service Center is an early-stage home lab project built for personal Raspberry Pi setups. It is not intended as a production-ready server management solution.
+
 Powered by PythonXP.
 
 ---
