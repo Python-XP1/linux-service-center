@@ -1,4 +1,5 @@
 from backends import systemctl_backend
+from models.service_entry import ServiceEntry
 
 
 def start_service(scope: str, service: str):
@@ -19,3 +20,21 @@ def enable_service(scope: str, service: str):
 
 def disable_service(scope: str, service: str):
     return systemctl_backend.disable_service(scope, service)
+
+def normalize_scope(scope: str) -> str:
+    scope = (scope or "system").lower().strip()
+    return "user" if scope == "user" else "system"
+
+
+def create_service_entry(
+    name: str,
+    service: str,
+    scope: str = "system",
+    **kwargs
+) -> ServiceEntry:
+    return ServiceEntry(
+        name=name.strip(),
+        service=service.strip(),
+        scope=normalize_scope(scope),
+        **kwargs
+    )
