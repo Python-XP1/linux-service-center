@@ -58,7 +58,7 @@ LOGO_CANDIDATES = [
     os.path.join(BASE_DIR, "logo.png"),
 ]
 
-APP_VERSION = "v0.9.3"
+APP_VERSION = "v0.9.4"
 APP_NAME = "Linux Service Center"
 APP_BRANDING = "powered by PythonXP"
 GITHUB_URL = "https://github.com/Python-XP1"

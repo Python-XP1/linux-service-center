@@ -33,7 +33,7 @@ DIAGNOSTIC_COMMANDS = [
 ]
 
 APP_NAME = "Linux Service Center CLI"
-APP_VERSION = "v0.9.3"
+APP_VERSION = "v0.9.4"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
