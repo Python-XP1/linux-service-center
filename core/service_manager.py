@@ -38,3 +38,6 @@ def create_service_entry(
         scope=normalize_scope(scope),
         **kwargs
     )
+
+def list_services(scope: str = "system"):
+    return systemctl_backend.list_services(scope)

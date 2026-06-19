@@ -39,3 +39,37 @@ def enable_service(scope: str, service: str) -> tuple[bool, str]:
 
 def disable_service(scope: str, service: str) -> tuple[bool, str]:
     return run_systemctl(scope, "disable", service)
+
+def list_services(scope: str = "system"):
+
+    if scope == "user":
+
+        cmd = [
+            "systemctl",
+            "--user",
+            "list-units",
+            "--type=service",
+            "--all",
+            "--no-pager"
+        ]
+
+    else:
+
+        cmd = [
+            "systemctl",
+            "list-units",
+            "--type=service",
+            "--all",
+            "--no-pager"
+        ]
+
+    result = subprocess.run(
+        cmd,
+        text=True,
+        capture_output=True
+    )
+
+    if result.returncode != 0:
+        return False, result.stderr
+
+    return True, result.stdout
