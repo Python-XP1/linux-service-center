@@ -42,6 +42,10 @@ class MainWindow:
         self.title = "Linux Service Center"
 
     def run(self):
+        print("=" * 40)
+        print(self.title)
+        print("MainWindow wrapper active")
+        print("=" * 40)
         print_main_window_data()
 
 
