@@ -1,9 +1,13 @@
-from ui.main_window import print_main_window_data
+from ui.main_window import MainWindow
 
 
-def run():
-    print_main_window_data()
+def main():
+
+    app = MainWindow()
+
+    app.run()
 
 
 if __name__ == "__main__":
-    run()
+
+    main()

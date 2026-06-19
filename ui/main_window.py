@@ -1,3 +1,5 @@
+# ui/main_window.py
+
 from core.config_loader import load_services
 from core.service_manager import list_service_entries
 from assistant.backend_assistant import get_backend_info
@@ -33,6 +35,14 @@ def print_main_window_data():
 
     for service in system_services[:10]:
         print(f"- {service.service} | {service.status} | {service.name}")
+
+
+class MainWindow:
+    def __init__(self):
+        self.title = "Linux Service Center"
+
+    def run(self):
+        print_main_window_data()
 
 
 if __name__ == "__main__":
