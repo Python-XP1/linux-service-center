@@ -36,3 +36,4 @@ services.json
 *.log
 *.tmp
 *.bak
+services.json
