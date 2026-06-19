@@ -69,13 +69,21 @@ COMMAND_TIMEOUT = 10
 # Pixel widths for the main service table. Header and rows use the same
 # grid configuration so status, startup, uptime, and actions stay aligned.
 SERVICE_GRID_COLUMNS = {
-    "service": 250,
+    "service": 230,
+    "scope": 90,
     "status": 110,
     "autostart": 110,
     "uptime": 90,
     "actions": 720,
 }
 ACTION_BUTTON_PADX = 2
+VALID_SERVICE_SCOPES = {"system", "user"}
+DEFAULT_SERVICE_SCOPE = "system"
+SYSTEM_ACTION_WARNING = (
+    "You are about to run a system-level action. "
+    "This may affect your operating system or critical services. Continue?"
+)
+PERMISSION_REQUIRED_MESSAGE = "Permission required or action cancelled."
 
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
 USER_NAME_RE = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_.-]*[$]?|[0-9]+)$")
@@ -258,7 +266,7 @@ def format_service_summary(services):
     failed = 0
 
     for item in services:
-        status = get_status(item.get("service", ""))
+        status = get_status(item.get("service", ""), item.get("scope", DEFAULT_SERVICE_SCOPE))
         if status == "active":
             active += 1
         elif status == "failed":
@@ -311,6 +319,7 @@ def load_services():
         services.append({
             "name": str(item.get("name", "")).strip(),
             "service": str(item.get("service", "")).strip(),
+            "scope": normalize_service_scope(item.get("scope", DEFAULT_SERVICE_SCOPE)),
             "path": path,
             "workdir": workdir,
             "venv_path": str(item.get("venv_path", "")).strip(),
@@ -364,6 +373,67 @@ def run_cmd(cmd):
         return "", str(e)
 
 
+def parse_systemd_service_names(output):
+    services = set()
+    for line in output.splitlines():
+        parts = line.split()
+        if parts and parts[0].endswith(".service"):
+            services.add(parts[0])
+    return services
+
+
+def collect_systemd_services(scope):
+    scope = normalize_service_scope(scope)
+    base_cmd = ["systemctl"]
+    if scope == "user":
+        base_cmd.append("--user")
+
+    commands = [
+        base_cmd + ["list-unit-files", "--type=service", "--no-legend"],
+        base_cmd + ["list-units", "--type=service", "--all", "--no-legend"],
+    ]
+
+    services = set()
+    errors = []
+    for command in commands:
+        out, err = run_cmd(command)
+        if out:
+            services.update(parse_systemd_service_names(out))
+        elif err:
+            errors.append(err)
+    return services, errors
+
+
+def detect_service_scope(service):
+    service = normalize_service_filename(service)
+    if not is_valid_service_name(service):
+        return DEFAULT_SERVICE_SCOPE, False, False
+
+    system_services, _ = collect_systemd_services("system")
+    user_services, _ = collect_systemd_services("user")
+    found_system = service in system_services
+    found_user = service in user_services
+
+    if found_system and not found_user:
+        return "system", True, False
+    if found_user and not found_system:
+        return "user", False, True
+    return None, found_system, found_user
+
+
+def list_services_with_scopes():
+    system_services, _ = collect_systemd_services("system")
+    user_services, _ = collect_systemd_services("user")
+    entries = []
+
+    for service in sorted(system_services):
+        entries.append((service, "system", f"[SYSTEM] {service}"))
+    for service in sorted(user_services):
+        entries.append((service, "user", f"[USER] {service}"))
+
+    return entries
+
+
 def show_error(title, message):
     try:
         if tk._default_root:
@@ -390,6 +460,27 @@ def report_runtime_error(key, title, message):
 
     last_runtime_errors.add(key)
     show_error(title, message)
+
+
+def normalize_service_scope(scope):
+    scope = str(scope or DEFAULT_SERVICE_SCOPE).strip().lower()
+    return scope if scope in VALID_SERVICE_SCOPES else DEFAULT_SERVICE_SCOPE
+
+
+def is_user_service_not_found(scope, message):
+    lowered = str(message or "").lower()
+    return scope == "user" and any(
+        token in lowered
+        for token in ["could not be found", "not-found", "not found", "unit "]
+    )
+
+
+def is_permission_error(message):
+    lowered = str(message or "").lower()
+    return any(
+        token in lowered
+        for token in ["password", "authentication", "interactive authentication", "not permitted", "permission denied", "cancelled", "canceled"]
+    )
 
 
 def is_valid_service_name(service):
@@ -461,6 +552,8 @@ def build_python_exec_start(python_executable, start_command, script_path):
 
 
 def validate_service_config(item):
+    item["scope"] = normalize_service_scope(item.get("scope", DEFAULT_SERVICE_SCOPE))
+
     if not item["name"] or not item["service"]:
         return "Display name and systemd service are required."
 
@@ -538,34 +631,66 @@ def needs_authentication(message):
     )
 
 
-def run_systemctl_action(action, service):
+def systemctl_read_command(scope, action, service):
+    cmd = ["systemctl"]
+    if normalize_service_scope(scope) == "user":
+        cmd.append("--user")
+    return cmd + [action, service]
+
+
+def journalctl_command(scope, service):
+    if normalize_service_scope(scope) == "user":
+        return ["journalctl", "--user-unit", service, "-n", "120", "--no-pager"]
+    return ["journalctl", "-u", service, "-n", "120", "--no-pager"]
+
+
+def systemctl_action_command(scope, action, service):
+    return systemctl_read_command(scope, action, service)
+
+
+def run_systemctl_action(action, service, scope=DEFAULT_SERVICE_SCOPE):
+    scope = normalize_service_scope(scope)
+
     try:
-        base_cmd = ["systemctl", action, service]
+        base_cmd = systemctl_action_command(scope, action, service)
+
+        if scope == "user":
+            ok, message = run_systemctl_command(base_cmd)
+            if not ok and is_user_service_not_found(scope, message):
+                return False, f"User service not found: {service}"
+            return ok, message
 
         if os.geteuid() == 0:
             return run_systemctl_command(base_cmd)
 
-        ok, message = run_systemctl_command(["sudo", "-n"] + base_cmd)
-        if ok:
-            return True, message
-
         pkexec_cmd = shutil.which("pkexec")
-        if needs_authentication(message) and pkexec_cmd:
-            ok, pkexec_message = run_systemctl_command([pkexec_cmd] + base_cmd)
+        if pkexec_cmd:
+            ok, message = run_systemctl_command([pkexec_cmd] + base_cmd)
             if ok:
-                return True, pkexec_message
-            message = pkexec_message or message
+                return True, message
+            if is_permission_error(message) or not message:
+                return False, PERMISSION_REQUIRED_MESSAGE
+        else:
+            message = ""
 
-        if needs_authentication(message):
-            message = (
-                "Missing permissions for this action.\n"
-                "Allow the displayed authentication prompt, start the application with suitable permissions, "
-                "or configure sudoers for systemctl.\n\n"
-                f"Original message:\n{message}"
-            )
+        ok, sudo_message = run_systemctl_command(["sudo"] + base_cmd)
+        if ok:
+            return True, sudo_message
+
+        message = sudo_message or message
+        if is_permission_error(message) or not message:
+            return False, PERMISSION_REQUIRED_MESSAGE
         return False, message
 
     except subprocess.TimeoutExpired:
+        if scope == "system":
+            pkexec_cmd = shutil.which("pkexec")
+            if pkexec_cmd:
+                try:
+                    return run_systemctl_command([pkexec_cmd] + systemctl_action_command(scope, action, service))
+                except (subprocess.TimeoutExpired, OSError):
+                    pass
+            return False, PERMISSION_REQUIRED_MESSAGE
         return False, "systemctl did not respond within 30 seconds."
 
     except OSError as e:
@@ -599,30 +724,40 @@ def format_command_result(label, code, stdout, stderr):
     return "\n".join(parts)
 
 
-def get_status(service):
+def get_status(service, scope=DEFAULT_SERVICE_SCOPE):
     if not is_valid_service_name(service):
         return "invalid"
 
-    out, _ = run_cmd(["systemctl", "is-active", service])
-    return out if out else "unknown"
+    out, err = run_cmd(systemctl_read_command(scope, "status", service) + ["--no-pager"])
+    combined = f"{out}\\n{err}".lower()
+    scope = normalize_service_scope(scope)
+    if is_user_service_not_found(scope, combined):
+        return "not-found"
+    if "active: active" in combined:
+        return "active"
+    if "active: failed" in combined or "failed" in combined:
+        return "failed"
+    if "active: inactive" in combined or "inactive" in combined:
+        return "inactive"
+    return "unknown"
 
 
-def get_enabled_status(service):
+def get_enabled_status(service, scope=DEFAULT_SERVICE_SCOPE):
     if not is_valid_service_name(service):
         return "invalid"
 
-    out, _ = run_cmd(["systemctl", "is-enabled", service])
+    out, err = run_cmd(systemctl_read_command(scope, "is-enabled", service))
+    message = err or out
+    if is_user_service_not_found(normalize_service_scope(scope), message):
+        return "not-found"
     return out if out else "unknown"
 
 
-def get_uptime(service):
-    if not is_valid_service_name(service):
+def get_uptime(service, scope=DEFAULT_SERVICE_SCOPE):
+    if not is_valid_service_name(service) or get_status(service, scope) != "active":
         return "-"
 
-    out, _ = run_cmd([
-        "systemctl",
-        "show",
-        service,
+    out, _ = run_cmd(systemctl_read_command(scope, "show", service) + [
         "--property=ActiveEnterTimestamp",
         "--value"
     ])
@@ -637,21 +772,18 @@ def get_uptime(service):
             text=True,
             timeout=COMMAND_TIMEOUT
         )
-
         start_ts = int(result.stdout.strip())
         diff = int(time.time()) - start_ts
-
-        if diff < 60:
-            return f"{diff}s"
-        if diff < 3600:
-            return f"{diff // 60}m"
-        if diff < 86400:
-            return f"{diff // 3600}h"
-
-        return f"{diff // 86400}d"
-
     except (ValueError, subprocess.SubprocessError, OSError):
         return "-"
+
+    if diff < 60:
+        return f"{diff}s"
+    if diff < 3600:
+        return f"{diff // 60}m"
+    if diff < 86400:
+        return f"{diff // 3600}h"
+    return f"{diff // 86400}d"
 
 
 def get_cpu_usage():
@@ -691,9 +823,13 @@ def get_disk_free():
         return "N/A"
 
 
-def control_service(action, service):
+def control_service(action, service, scope=DEFAULT_SERVICE_SCOPE):
+    scope = normalize_service_scope(scope)
     if action not in {"start", "stop", "restart"} or not is_valid_service_name(service):
         messagebox.showerror("Invalid action", "Service or action is invalid.")
+        return
+
+    if scope == "system" and not messagebox.askyesno("System-level action", SYSTEM_ACTION_WARNING):
         return
 
     invalidate_refresh()
@@ -707,7 +843,7 @@ def control_service(action, service):
         service_count_label.config(text=f"{action_labels[action]} running for {service}...")
 
     def task():
-        return run_systemctl_action(action, service)
+        return run_systemctl_action(action, service, scope)
 
     def done(result):
         if isinstance(result, Exception):
@@ -804,9 +940,13 @@ def show_diagnostics_window():
     run_diagnostics()
 
 
-def control_autostart(action, service):
+def control_autostart(action, service, scope=DEFAULT_SERVICE_SCOPE):
+    scope = normalize_service_scope(scope)
     if action not in {"enable", "disable"} or not is_valid_service_name(service):
         messagebox.showerror("Invalid action", "Service or action is invalid.")
+        return
+
+    if scope == "system" and not messagebox.askyesno("System-level action", SYSTEM_ACTION_WARNING):
         return
 
     invalidate_refresh()
@@ -814,7 +954,7 @@ def control_autostart(action, service):
         service_count_label.config(text=f"Startup {action} running for {service}...")
 
     def task():
-        return run_systemctl_action(action, service)
+        return run_systemctl_action(action, service, scope)
 
     def done(result):
         if isinstance(result, Exception):
@@ -887,15 +1027,16 @@ def open_code(path):
         messagebox.showerror("VS Code Error", str(e))
 
 
-def show_logs(service):
+def show_logs(service, scope=DEFAULT_SERVICE_SCOPE):
+    scope = normalize_service_scope(scope)
     if not is_valid_service_name(service):
         messagebox.showerror("Invalid service", "The service name is invalid.")
         return
 
-    out, err = run_cmd(["journalctl", "-u", service, "-n", "120", "--no-pager"])
+    out, err = run_cmd(journalctl_command(scope, service))
 
     win = tk.Toplevel(root)
-    win.title(f"Logs: {service}")
+    win.title(f"Logs: [{scope.upper()}] {service}")
     win.geometry("950x540")
     win.configure(bg=COLORS["bg"])
 
@@ -907,14 +1048,18 @@ def show_logs(service):
         insertbackground="white"
     )
     text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-    text.insert(tk.END, out if out else err)
+
+    if scope == "user" and is_user_service_not_found(scope, err or out):
+        text.insert(tk.END, f"User service not found: {service}")
+    else:
+        text.insert(tk.END, out if out else err)
     text.config(state=tk.DISABLED)
 
 
-def browse_services(target_entry):
+def browse_services(target_entry, scope_var=None):
     win = tk.Toplevel(root)
     win.title("Browse systemd services")
-    win.geometry("720x520")
+    win.geometry("760x540")
     win.configure(bg=COLORS["bg"])
 
     tk.Label(
@@ -939,7 +1084,7 @@ def browse_services(target_entry):
 
     tk.Label(
         win,
-        text="Type part of a name, e.g. ssh, bluetooth, nginx",
+        text="System and user services are listed together with their scope.",
         fg=COLORS["muted"],
         bg=COLORS["bg"],
         font=FONT_SMALL
@@ -949,35 +1094,39 @@ def browse_services(target_entry):
     list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
     scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
-    listbox = create_listbox(list_frame, width=85)
+    listbox = create_listbox(list_frame, width=90)
     listbox.configure(yscrollcommand=scrollbar.set)
     scrollbar.configure(command=listbox.yview)
     scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
     listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    out, err = run_cmd(["systemctl", "list-unit-files", "--type=service", "--no-legend"])
+    entries = list_services_with_scopes()
+    label_to_entry = {label: (service, scope) for service, scope, label in entries}
 
-    if err and not out:
-        messagebox.showwarning("Load services", err)
-
-    all_services = sorted([line.split()[0] for line in out.splitlines() if line.strip()])
+    if not entries:
+        listbox.insert(tk.END, "No systemd services found.")
 
     def fill_list(filter_text=""):
         listbox.delete(0, tk.END)
-
-        for service in all_services:
-            if filter_text.lower() in service.lower():
-                listbox.insert(tk.END, service)
+        lowered = filter_text.lower()
+        for service, scope, label in entries:
+            if lowered in service.lower() or lowered in scope:
+                listbox.insert(tk.END, label)
 
     def select_service(event=None):
         selection = listbox.curselection()
-
         if not selection:
             return
 
-        service = listbox.get(selection[0])
+        label = listbox.get(selection[0])
+        if label not in label_to_entry:
+            return
+
+        service, scope = label_to_entry[label]
         target_entry.delete(0, tk.END)
         target_entry.insert(0, service)
+        if scope_var is not None:
+            scope_var.set(scope)
         win.destroy()
 
     def get_search_text():
@@ -993,47 +1142,185 @@ def browse_services(target_entry):
     listbox.bind("<Double-Button-1>", select_service)
 
     create_button(win, text="Apply", command=select_service).pack(pady=10)
-
     fill_list()
+
 
 
 def project_form(title_text, existing=None, index=None):
     win = tk.Toplevel(root)
     win.title(title_text)
-    win.geometry("620x690")
-    win.minsize(560, 640)
+    win.geometry("640x690")
+    win.minsize(560, 520)
     win.configure(bg=COLORS["bg"])
 
+    outer = tk.Frame(win, bg=COLORS["bg"])
+    outer.pack(fill=tk.BOTH, expand=True)
+
+    canvas = tk.Canvas(outer, bg=COLORS["bg"], highlightthickness=0, bd=0)
+    scrollbar = tk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    content = tk.Frame(canvas, bg=COLORS["bg"])
+    content_window = canvas.create_window((0, 0), window=content, anchor="nw")
+
+    def update_scroll_region(event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        canvas.itemconfigure(content_window, width=canvas.winfo_width())
+
+    content.bind("<Configure>", update_scroll_region)
+    canvas.bind("<Configure>", update_scroll_region)
+
+    def on_mousewheel(event):
+        if event.num == 4:
+            canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            canvas.yview_scroll(1, "units")
+        else:
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def bind_mousewheel(event=None):
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+        canvas.bind_all("<Button-4>", on_mousewheel)
+        canvas.bind_all("<Button-5>", on_mousewheel)
+
+    def unbind_mousewheel(event=None):
+        canvas.unbind_all("<MouseWheel>")
+        canvas.unbind_all("<Button-4>")
+        canvas.unbind_all("<Button-5>")
+
+    canvas.bind("<Enter>", bind_mousewheel)
+    canvas.bind("<Leave>", unbind_mousewheel)
+    content.bind("<Enter>", bind_mousewheel)
+    content.bind("<Leave>", unbind_mousewheel)
+
+    def close_window():
+        nonlocal detection_after_id
+        if detection_after_id:
+            try:
+                win.after_cancel(detection_after_id)
+            except tk.TclError:
+                pass
+            detection_after_id = None
+        unbind_mousewheel()
+        win.destroy()
+
+    win.protocol("WM_DELETE_WINDOW", close_window)
+
     fields = {}
+    detection_after_id = None
+    last_detection_notice = {"service": "", "kind": ""}
 
     def add_form_field(key, label, value="", hint=""):
-        tk.Label(win, text=label, fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(8, 0))
-        entry = create_entry(win, width=70)
+        tk.Label(content, text=label, fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(8, 0))
+        entry = create_entry(content, width=70)
         entry.pack(padx=20, pady=3, fill=tk.X)
         if value:
             entry.insert(0, value)
         if hint:
-            tk.Label(win, text=hint, fg=COLORS["muted"], bg=COLORS["bg"], font=("Arial", 9)).pack(anchor="w", padx=20)
+            tk.Label(content, text=hint, fg=COLORS["muted"], bg=COLORS["bg"], font=("Arial", 9)).pack(anchor="w", padx=20)
         fields[key] = entry
         return entry
 
     add_form_field("name", "Display name", existing.get("name", "") if existing else "")
+    service_entry = add_form_field("service", "Systemd Service", existing.get("service", "") if existing else "")
 
-    add_form_field("service", "Systemd Service", existing.get("service", "") if existing else "")
+    tk.Label(content, text="Scope", fg="white", bg=COLORS["bg"]).pack(anchor="w", padx=20, pady=(8, 0))
+    scope_var = tk.StringVar(value=normalize_service_scope(existing.get("scope", DEFAULT_SERVICE_SCOPE) if existing else DEFAULT_SERVICE_SCOPE))
+    scope_menu = tk.OptionMenu(content, scope_var, "system", "user")
+    scope_menu.configure(bg=COLORS["button"], fg=COLORS["text"], activebackground=COLORS["button_hover"], activeforeground=COLORS["text"], relief=tk.FLAT, highlightthickness=0)
+    scope_menu["menu"].configure(bg=COLORS["button"], fg=COLORS["text"])
+    scope_menu.pack(anchor="w", padx=20, pady=3)
+    tk.Label(
+        content,
+        text=(
+            "Scope is detected by where the service is registered:\n"
+            "System = /etc/systemd/system or system-wide systemd\n"
+            "User = ~/.config/systemd/user or systemctl --user\n"
+            "Your own projects can still be system services if they were installed system-wide."
+        ),
+        fg=COLORS["muted"],
+        bg=COLORS["bg"],
+        font=("Arial", 9),
+        justify="left",
+        wraplength=560
+    ).pack(anchor="w", padx=20)
 
     tk.Label(
-        win,
+        content,
         text="Example: ssh.service, bluetooth.service, nginx.service",
         fg=COLORS["muted"],
         bg=COLORS["bg"],
         font=("Arial", 9)
     ).pack(anchor="w", padx=20)
 
+    def show_detection_notice(service, kind, message, level="info"):
+        if last_detection_notice["service"] == service and last_detection_notice["kind"] == kind:
+            return
+        last_detection_notice["service"] = service
+        last_detection_notice["kind"] = kind
+        if level == "warning":
+            messagebox.showwarning("Scope detection", message)
+        else:
+            messagebox.showinfo("Scope detection", message)
+
+    def looks_like_personal_project_service(service):
+        name_value = fields["name"].get().strip().lower()
+        service_base = service.rsplit(".service", 1)[0].lower()
+        if name_value and name_value not in {"system", "service"}:
+            normalized_name = re.sub(r"[^a-z0-9]+", "-", name_value).strip("-")
+            if normalized_name and normalized_name in service_base:
+                return True
+        return any(token in service_base for token in ["app", "web", "project", "tool", "api", "flask", "django"])
+
+    def detect_and_apply_scope(show_not_found=False):
+        service = normalize_service_filename(service_entry.get().strip())
+        if not service or not is_valid_service_name(service):
+            return
+
+        detected_scope, found_system, found_user = detect_service_scope(service)
+        if found_system and found_user:
+            show_detection_notice(
+                service,
+                "both",
+                "This service exists as both system and user service. Please choose the correct scope.",
+                "warning"
+            )
+            return
+        if detected_scope:
+            scope_var.set(detected_scope)
+            if detected_scope == "system" and looks_like_personal_project_service(service):
+                show_detection_notice(
+                    service,
+                    "personal-system",
+                    "This service is registered as a system service. If you want it to run as a user service, create it under ~/.config/systemd/user and use systemctl --user.",
+                    "warning"
+                )
+            return
+        if show_not_found:
+            show_detection_notice(
+                service,
+                "not-found",
+                "Service not found. Please select the correct scope manually.",
+                "warning"
+            )
+
+    def schedule_scope_detection(event=None):
+        nonlocal detection_after_id
+        if detection_after_id:
+            win.after_cancel(detection_after_id)
+        detection_after_id = win.after(650, lambda: detect_and_apply_scope(False))
+
+    service_entry.bind("<KeyRelease>", schedule_scope_detection)
+    service_entry.bind("<FocusOut>", lambda event: detect_and_apply_scope(True))
+    service_entry.bind("<Return>", lambda event: detect_and_apply_scope(True))
+
     create_button(
-        win,
+        content,
         text="Browse services",
         width=22,
-        command=lambda: browse_services(fields["service"])
+        command=lambda: browse_services(fields["service"], scope_var)
     ).pack(pady=6)
 
     add_form_field("path", "Folder/path optional", existing.get("path", "") if existing else "")
@@ -1063,6 +1350,9 @@ def project_form(title_text, existing=None, index=None):
     )
     add_form_field("url", "URL optional", existing.get("url", "") if existing else "")
 
+    button_bar = tk.Frame(win, bg=COLORS["panel"], padx=16, pady=12)
+    button_bar.pack(fill=tk.X, side=tk.BOTTOM)
+
     def save_project():
         services = load_services()
         path = fields["path"].get().strip()
@@ -1071,6 +1361,7 @@ def project_form(title_text, existing=None, index=None):
         item = {
             "name": fields["name"].get().strip(),
             "service": fields["service"].get().strip(),
+            "scope": normalize_service_scope(scope_var.get()),
             "path": path or workdir,
             "workdir": workdir,
             "venv_path": fields["venv_path"].get().strip(),
@@ -1097,9 +1388,10 @@ def project_form(title_text, existing=None, index=None):
             return
 
         refresh_services()
-        win.destroy()
+        close_window()
 
-    create_button(win, text="Save", width=18, command=save_project).pack(pady=18)
+    create_button(button_bar, text="Cancel", width=12, command=close_window, variant="muted").pack(side=tk.RIGHT, padx=6)
+    create_button(button_bar, text="Save", width=18, command=save_project, variant="success").pack(side=tk.RIGHT, padx=6)
 
 
 
@@ -1120,7 +1412,7 @@ def has_line_break(value):
     return "\n" in value or "\r" in value
 
 
-def build_service_unit(description, command, working_dir, user_name, restart_policy):
+def build_service_unit(description, command, working_dir, user_name, restart_policy, install_target="multi-user.target"):
     """Build the text content of a simple systemd service file."""
     lines = [
         "[Unit]",
@@ -1143,7 +1435,7 @@ def build_service_unit(description, command, working_dir, user_name, restart_pol
         "RestartSec=5",
         "",
         "[Install]",
-        "WantedBy=multi-user.target",
+        f"WantedBy={install_target}",
         ""
     ])
 
@@ -1190,6 +1482,53 @@ def write_systemd_service(service_name, unit_text):
             return False, reload_result.stderr.strip() or "daemon-reload failed."
 
         return True, f"Service created: {service_path}"
+
+    except subprocess.TimeoutExpired:
+        return False, "Write operation timed out."
+    except OSError as e:
+        return False, str(e)
+
+
+def user_systemd_service_dir():
+    return os.path.join(os.path.expanduser("~"), ".config", "systemd", "user")
+
+
+def user_systemd_service_path(service_name):
+    return os.path.join(user_systemd_service_dir(), service_name)
+
+
+def write_user_systemd_service(service_name, unit_text):
+    """Write a user-level systemd service without administrator privileges."""
+    if not is_valid_service_name(service_name):
+        return False, "Invalid service name. Example: my-project.service"
+
+    service_dir = user_systemd_service_dir()
+    service_path = user_systemd_service_path(service_name)
+
+    try:
+        os.makedirs(service_dir, exist_ok=True)
+        with open(service_path, "w", encoding="utf-8") as f:
+            f.write(unit_text)
+
+        chmod_result = subprocess.run(
+            ["chmod", "644", service_path],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if chmod_result.returncode != 0:
+            return False, chmod_result.stderr.strip() or "Permissions could not be set."
+
+        reload_result = subprocess.run(
+            ["systemctl", "--user", "daemon-reload"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if reload_result.returncode != 0:
+            return False, reload_result.stderr.strip() or "user daemon-reload failed."
+
+        return True, f"User service created: {service_path}"
 
     except subprocess.TimeoutExpired:
         return False, "Write operation timed out."
@@ -1352,8 +1691,118 @@ def service_assistant_window():
     workdir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
     fields["workdir"] = workdir_entry
 
+    def bring_assistant_to_front():
+        try:
+            win.deiconify()
+            win.lift()
+            win.focus_force()
+            win.attributes("-topmost", True)
+            win.after(250, lambda: win.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+
+    def choose_existing_directory(initial_dir=None):
+        current_dir = normalize_path(initial_dir or os.path.expanduser("~"))
+        if not os.path.isdir(current_dir):
+            current_dir = os.path.expanduser("~")
+
+        selected_path = {"value": None}
+        dialog = tk.Toplevel(win)
+        dialog.title("Choose project folder")
+        dialog.geometry("620x460")
+        dialog.minsize(520, 360)
+        dialog.configure(bg=COLORS["bg"])
+        dialog.transient(win)
+        dialog.grab_set()
+
+        path_var = tk.StringVar(value=current_dir)
+
+        tk.Label(
+            dialog,
+            text="Choose project folder",
+            fg=COLORS["text"],
+            bg=COLORS["bg"],
+            font=("Arial", 14, "bold")
+        ).pack(anchor="w", padx=14, pady=(12, 4))
+
+        path_label = tk.Label(
+            dialog,
+            textvariable=path_var,
+            fg=COLORS["muted"],
+            bg=COLORS["bg"],
+            font=FONT_SMALL,
+            anchor="w"
+        )
+        path_label.pack(fill=tk.X, padx=14, pady=(0, 8))
+
+        list_frame = tk.Frame(dialog, bg=COLORS["bg"])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 10))
+        scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        listbox = create_listbox(list_frame, width=80)
+        listbox.configure(yscrollcommand=scrollbar.set)
+        scrollbar.configure(command=listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        button_row = tk.Frame(dialog, bg=COLORS["panel"], padx=12, pady=10)
+        button_row.pack(fill=tk.X, side=tk.BOTTOM)
+
+        def list_dirs(folder):
+            nonlocal current_dir
+            folder = normalize_path(folder)
+            if not os.path.isdir(folder):
+                return
+            current_dir = folder
+            path_var.set(folder)
+            listbox.delete(0, tk.END)
+            try:
+                entries = sorted(
+                    name for name in os.listdir(folder)
+                    if os.path.isdir(os.path.join(folder, name)) and not name.startswith(".")
+                )
+            except OSError as e:
+                messagebox.showwarning("Choose project folder", str(e), parent=dialog)
+                entries = []
+            for name in entries:
+                listbox.insert(tk.END, name)
+
+        def selected_folder_or_current():
+            selection = listbox.curselection()
+            if selection:
+                return os.path.join(current_dir, listbox.get(selection[0]))
+            return current_dir
+
+        def enter_selected(event=None):
+            folder = selected_folder_or_current()
+            if os.path.isdir(folder):
+                list_dirs(folder)
+
+        def choose_selected(event=None):
+            folder = selected_folder_or_current()
+            if os.path.isdir(folder):
+                selected_path["value"] = normalize_path(folder)
+                dialog.destroy()
+
+        def go_up():
+            parent = os.path.dirname(current_dir.rstrip(os.sep)) or os.sep
+            list_dirs(parent)
+
+        listbox.bind("<Double-Button-1>", enter_selected)
+        listbox.bind("<Return>", choose_selected)
+
+        create_button(button_row, text="Cancel", width=12, command=dialog.destroy, variant="muted").pack(side=tk.RIGHT, padx=5)
+        create_button(button_row, text="OK", width=12, command=choose_selected, variant="success").pack(side=tk.RIGHT, padx=5)
+        create_button(button_row, text="Open", width=12, command=enter_selected, variant="accent").pack(side=tk.RIGHT, padx=5)
+        create_button(button_row, text="Up", width=10, command=go_up, variant="muted").pack(side=tk.LEFT, padx=5)
+
+        list_dirs(current_dir)
+        dialog.wait_window()
+        return selected_path["value"]
+
     def choose_folder():
-        selected = filedialog.askdirectory(title="Choose project folder")
+        initial_dir = fields["workdir"].get().strip() or os.path.expanduser("~")
+        selected = choose_existing_directory(initial_dir)
+        bring_assistant_to_front()
         if not selected:
             return
         workdir_entry.delete(0, tk.END)
@@ -1367,6 +1816,56 @@ def service_assistant_window():
     venv_entry = add_field(simple_frame, "venv_path", "Virtualenv path optional", "If set, the assistant uses <venv>/bin/python when possible.")
     script_entry = add_field(simple_frame, "script", "Python file", "Usually app.py or main.py. Absolute paths are also allowed.", "app.py")
     url_entry = add_field(simple_frame, "url", "URL optional", "For web apps, e.g. http://127.0.0.1:5050")
+
+    service_type_var = tk.StringVar(value="user")
+    service_type_touched = tk.BooleanVar(value=False)
+
+    service_type_frame = tk.Frame(simple_frame, bg=COLORS["bg"])
+    service_type_frame.pack(fill=tk.X, pady=(14, 0))
+    tk.Label(service_type_frame, text="Service type", fg=COLORS["text"], bg=COLORS["bg"], font=FONT_BOLD).pack(anchor="w")
+
+    def mark_service_type_touched():
+        service_type_touched.set(True)
+        update_preview()
+
+    tk.Radiobutton(
+        service_type_frame,
+        text="User service (recommended)",
+        variable=service_type_var,
+        value="user",
+        command=mark_service_type_touched,
+        fg=COLORS["text"],
+        bg=COLORS["bg"],
+        activebackground=COLORS["bg"],
+        activeforeground=COLORS["text"],
+        selectcolor=COLORS["panel"],
+        font=FONT_MAIN
+    ).pack(anchor="w")
+    tk.Radiobutton(
+        service_type_frame,
+        text="System service (advanced)",
+        variable=service_type_var,
+        value="system",
+        command=mark_service_type_touched,
+        fg=COLORS["text"],
+        bg=COLORS["bg"],
+        activebackground=COLORS["bg"],
+        activeforeground=COLORS["text"],
+        selectcolor=COLORS["panel"],
+        font=FONT_MAIN
+    ).pack(anchor="w")
+    tk.Label(
+        service_type_frame,
+        text=(
+            "User service:\nRuns only for your account.\nNo administrator privileges required.\n\n"
+            "System service:\nRuns system-wide and requires administrator privileges."
+        ),
+        fg=COLORS["muted"],
+        bg=COLORS["bg"],
+        font=FONT_SMALL,
+        justify="left",
+        wraplength=680
+    ).pack(anchor="w", pady=(2, 0))
 
     options_frame = tk.Frame(simple_frame, bg=COLORS["bg"])
     options_frame.pack(anchor="w", pady=(12, 0), fill=tk.X)
@@ -1448,10 +1947,24 @@ def service_assistant_window():
             value = "my-project"
         return normalize_service_filename(value)
 
+    def folder_is_inside_home(folder):
+        home = normalize_path(os.path.expanduser("~"))
+        folder = normalize_path(folder)
+        try:
+            return os.path.commonpath([home, folder]) == home
+        except ValueError:
+            return False
+
+    def recommend_service_type_for_folder(folder):
+        if not service_type_touched.get() and folder_is_inside_home(folder):
+            service_type_var.set("user")
+
     def maybe_autofill_from_folder(folder):
         folder = normalize_path(folder)
         if not folder:
             return
+
+        recommend_service_type_for_folder(folder)
 
         if not fields["name"].get().strip():
             fields["name"].insert(0, os.path.basename(folder.rstrip(os.sep)) or "My Project")
@@ -1491,6 +2004,7 @@ def service_assistant_window():
         service_name = normalize_service_filename(fields["service"].get().strip()) if fields["service"].get().strip() else slugify_service_name(name)
         user_name = fields["user"].get().strip()
         restart_policy = restart_var.get()
+        service_scope = normalize_service_scope(service_type_var.get())
 
         if not name:
             return None, "Project name is missing."
@@ -1522,19 +2036,22 @@ def service_assistant_window():
             description=name,
             command=command,
             working_dir=workdir,
-            user_name=user_name,
-            restart_policy=restart_policy
+            user_name=user_name if service_scope == "system" else "",
+            restart_policy=restart_policy,
+            install_target="multi-user.target" if service_scope == "system" else "default.target"
         )
 
         return {
             "name": name,
             "service": service_name,
+            "scope": service_scope,
             "path": workdir,
             "workdir": workdir,
             "venv_path": venv_path,
             "python_executable": python_executable,
             "start_command": start_command or script_value,
             "url": url,
+            "service_path": user_systemd_service_path(service_name) if service_scope == "user" else f"/etc/systemd/system/{service_name}",
             "unit_text": unit_text,
             "enable": enable_var.get(),
             "start": start_var.get(),
@@ -1548,12 +2065,21 @@ def service_assistant_window():
         if error:
             preview_box.insert(tk.END, f"Preview is not complete yet:\n{error}")
         else:
-            preview_box.insert(tk.END, data["unit_text"])
+            preview_box.insert(tk.END, f"Target: {data['service_path']}\n\n{data['unit_text']}")
         preview_box.config(state=tk.DISABLED)
 
-    for entry in fields.values():
-        entry.bind("<KeyRelease>", update_preview)
+    def on_workdir_changed(event=None):
+        recommend_service_type_for_folder(fields["workdir"].get().strip())
+        update_preview()
+
+    for key, entry in fields.items():
+        if key == "workdir":
+            entry.bind("<KeyRelease>", on_workdir_changed)
+            entry.bind("<FocusOut>", on_workdir_changed)
+        else:
+            entry.bind("<KeyRelease>", update_preview)
     restart_var.trace_add("write", lambda *_: update_preview())
+    service_type_var.trace_add("write", lambda *_: update_preview())
 
     def create_service():
         data, error = collect_data()
@@ -1561,24 +2087,40 @@ def service_assistant_window():
             messagebox.showwarning("Check input", error)
             return
 
-        if not messagebox.askyesno(
-            "Create service",
-            f"Create {data['service']} under /etc/systemd/system?"
-        ):
-            return
+        if data["scope"] == "user":
+            if not messagebox.askyesno(
+                "Create user service?",
+                f"Create user service?\n\nPath:\n~/.config/systemd/user/{data['service']}"
+            ):
+                return
+        else:
+            if not messagebox.askyesno(
+                "Create system service?",
+                f"Create system service?\n\nPath:\n/etc/systemd/system/{data['service']}\n\nAdministrator privileges required."
+            ):
+                return
+
+            if (data["enable"] or data["start"]) and not messagebox.askyesno(
+                "System-level action",
+                SYSTEM_ACTION_WARNING
+            ):
+                return
 
         def task():
-            ok, msg = write_systemd_service(data["service"], data["unit_text"])
+            if data["scope"] == "user":
+                ok, msg = write_user_systemd_service(data["service"], data["unit_text"])
+            else:
+                ok, msg = write_systemd_service(data["service"], data["unit_text"])
             if not ok:
                 return False, msg
 
             if data["enable"]:
-                ok, msg = run_systemctl_action("enable", data["service"])
+                ok, msg = run_systemctl_action("enable", data["service"], data["scope"])
                 if not ok:
                     return False, msg
 
             if data["start"]:
-                ok, msg = run_systemctl_action("start", data["service"])
+                ok, msg = run_systemctl_action("start", data["service"], data["scope"])
                 if not ok:
                     return False, msg
 
@@ -1587,6 +2129,7 @@ def service_assistant_window():
                 item = {
                     "name": data["name"],
                     "service": data["service"],
+                    "scope": data["scope"],
                     "path": data["path"],
                     "workdir": data["workdir"],
                     "venv_path": data["venv_path"],
@@ -1768,10 +2311,11 @@ def add_header():
 
     columns = [
         ("Service", "service", 0),
-        ("Status", "status", 1),
-        ("Startup", "autostart", 2),
-        ("Uptime", "uptime", 3),
-        ("Aktionen", "actions", 4),
+        ("Scope", "scope", 1),
+        ("Status", "status", 2),
+        ("Startup", "autostart", 3),
+        ("Uptime", "uptime", 4),
+        ("Actions", "actions", 5),
     ]
 
     for text, key, index in columns:
@@ -1795,12 +2339,13 @@ def collect_service_snapshot(services, filter_text):
     for index, item in enumerate(services):
         name = item.get("name", "Unbenannt")
         service = item.get("service", "")
+        scope = normalize_service_scope(item.get("scope", DEFAULT_SERVICE_SCOPE))
         path = item.get("path", "")
         url = item.get("url", "")
 
-        status = get_status(service)
-        enabled = get_enabled_status(service)
-        uptime = get_uptime(service) if status == "active" else "-"
+        status = get_status(service, scope)
+        enabled = get_enabled_status(service, scope)
+        uptime = get_uptime(service, scope) if status == "active" else "-"
 
         if status == "active":
             active += 1
@@ -1816,6 +2361,7 @@ def collect_service_snapshot(services, filter_text):
             "index": index,
             "name": name,
             "service": service,
+            "scope": scope,
             "path": path,
             "url": url,
             "status": status,
@@ -1854,6 +2400,7 @@ def render_service_snapshot(rows, summary, generation):
         index = item["index"]
         name = item["name"]
         service = item["service"]
+        scope = item["scope"]
         path = item["path"]
         url = item["url"]
         status = item["status"]
@@ -1887,10 +2434,11 @@ def render_service_snapshot(rows, summary, generation):
         row.pack(fill=tk.X, padx=10, pady=5)
         row.bind("<Double-Button-1>", lambda e, i=index: edit_service_by_index(i))
         row.grid_columnconfigure(0, minsize=SERVICE_GRID_COLUMNS["service"])
-        row.grid_columnconfigure(1, minsize=SERVICE_GRID_COLUMNS["status"])
-        row.grid_columnconfigure(2, minsize=SERVICE_GRID_COLUMNS["autostart"])
-        row.grid_columnconfigure(3, minsize=SERVICE_GRID_COLUMNS["uptime"])
-        row.grid_columnconfigure(4, minsize=SERVICE_GRID_COLUMNS["actions"])
+        row.grid_columnconfigure(1, minsize=SERVICE_GRID_COLUMNS["scope"])
+        row.grid_columnconfigure(2, minsize=SERVICE_GRID_COLUMNS["status"])
+        row.grid_columnconfigure(3, minsize=SERVICE_GRID_COLUMNS["autostart"])
+        row.grid_columnconfigure(4, minsize=SERVICE_GRID_COLUMNS["uptime"])
+        row.grid_columnconfigure(5, minsize=SERVICE_GRID_COLUMNS["actions"])
 
         status_icon = "▲" if status == "failed" else "●"
 
@@ -1905,19 +2453,20 @@ def render_service_snapshot(rows, summary, generation):
             ).grid(row=0, column=column, sticky="w", padx=8, pady=6)
 
         add_cell(0, f"{status_icon}  {name}", status_color, ("Arial", 13, "bold"))
-        add_cell(1, status, status_color)
-        add_cell(2, enabled_text, enabled_color)
-        add_cell(3, uptime, uptime_color(uptime))
+        add_cell(1, scope.upper(), COLORS["accent"] if scope == "user" else COLORS["muted"])
+        add_cell(2, status, status_color)
+        add_cell(3, enabled_text, enabled_color)
+        add_cell(4, uptime, uptime_color(uptime))
 
         actions_frame = tk.Frame(row, bg=row_bg)
-        actions_frame.grid(row=0, column=4, sticky="w", padx=8, pady=4)
+        actions_frame.grid(row=0, column=5, sticky="w", padx=8, pady=4)
 
-        create_button(actions_frame, text="Start", width=7, variant="success", command=lambda s=service: control_service("start", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
-        create_button(actions_frame, text="Stop", width=7, variant="danger", command=lambda s=service: control_service("stop", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
-        create_button(actions_frame, text="Restart", width=8, variant="warning", command=lambda s=service: control_service("restart", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
-        create_button(actions_frame, text="Logs", width=7, variant="accent", command=lambda s=service: show_logs(s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
-        create_button(actions_frame, text="Auto on", width=8, variant="success", command=lambda s=service: control_autostart("enable", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
-        create_button(actions_frame, text="Auto off", width=8, variant="danger", command=lambda s=service: control_autostart("disable", s)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Start", width=7, variant="success", command=lambda s=service, sc=scope: control_service("start", s, sc)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Stop", width=7, variant="danger", command=lambda s=service, sc=scope: control_service("stop", s, sc)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Restart", width=8, variant="warning", command=lambda s=service, sc=scope: control_service("restart", s, sc)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Logs", width=7, variant="accent", command=lambda s=service, sc=scope: show_logs(s, sc)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Auto on", width=8, variant="success", command=lambda s=service, sc=scope: control_autostart("enable", s, sc)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
+        create_button(actions_frame, text="Auto off", width=8, variant="danger", command=lambda s=service, sc=scope: control_autostart("disable", s, sc)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)
 
         if url:
             create_button(actions_frame, text="URL", width=7, variant="accent", command=lambda u=url: open_url(u)).pack(side=tk.LEFT, padx=ACTION_BUTTON_PADX)

@@ -20,13 +20,13 @@ dist/
 # Local editor and OS metadata
 .vscode/
 .idea/
-codex_copy.txt
 *.swp
 *.swo
 .DS_Store
 Thumbs.db
 .codex
 .agents
+services.json
 
 # Syncthing metadata and conflict copies
 .stfolder/

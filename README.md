@@ -15,6 +15,11 @@ This application requires systemd and is not compatible with Windows.
 
 ⚠️ Linux Service Center is an early-stage home lab project built for personal Raspberry Pi setups. It is not intended as a production-ready server management solution.
 
+Security note:
+System services are executed through sudo.
+Whether a password is requested depends on your local sudoers configuration.
+If your user has NOPASSWD privileges, no password prompt will appear.
+
 Powered by PythonXP.
 
 ---
