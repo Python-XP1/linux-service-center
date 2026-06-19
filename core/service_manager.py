@@ -25,6 +25,8 @@ def normalize_scope(scope: str) -> str:
     scope = (scope or "system").lower().strip()
     return "user" if scope == "user" else "system"
 
+def list_service_entries(scope: str = "system"):
+    return systemctl_backend.list_service_entries(scope)
 
 def create_service_entry(
     name: str,
@@ -41,3 +43,4 @@ def create_service_entry(
 
 def list_services(scope: str = "system"):
     return systemctl_backend.list_services(scope)
+

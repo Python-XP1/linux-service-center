@@ -1,4 +1,5 @@
 import subprocess
+from models.service_entry import ServiceEntry
 
 
 def build_systemctl_command(scope: str, action: str, service: str) -> list[str]:
@@ -73,3 +74,83 @@ def list_services(scope: str = "system"):
         return False, result.stderr
 
     return True, result.stdout
+
+def parse_systemctl_list(output: str, scope: str = "system") -> list[ServiceEntry]:
+
+    services = []
+
+    for line in output.splitlines():
+
+        line = line.strip()
+
+        if not line:
+
+            continue
+
+        if line.startswith("UNIT "):
+
+            continue
+
+        if line.startswith("LOAD "):
+
+            continue
+
+        if line.startswith("Legend:"):
+
+            continue
+
+        if line.startswith("To show"):
+
+            continue
+
+        if not ".service" in line:
+
+            continue
+
+        parts = line.split(None, 4)
+
+        if len(parts) < 4:
+
+            continue
+
+        unit = parts[0]
+
+        load = parts[1]
+
+        active = parts[2]
+
+        sub = parts[3]
+
+        description = parts[4] if len(parts) > 4 else ""
+
+        services.append(
+
+            ServiceEntry(
+
+                name=description or unit,
+
+                service=unit,
+
+                scope=scope,
+
+                status=active,
+
+                startup=load,
+
+                uptime="-"
+
+            )
+
+        )
+
+    return services
+
+def list_service_entries(scope: str = "system") -> tuple[bool, list[ServiceEntry] | str]:
+
+    ok, output = list_services(scope)
+
+    if not ok:
+
+        return False, output
+
+    return True, parse_systemctl_list(output, scope)
