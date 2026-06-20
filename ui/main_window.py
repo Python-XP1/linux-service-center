@@ -10,7 +10,6 @@ from core.service_manager import (
     stop_service,
     restart_service,
 )
-
 from assistant.backend_assistant import get_backend_info
 
 
@@ -99,60 +98,75 @@ class MainWindow:
         buttons = tk.Frame(self.root, bg="#0f1724", padx=18, pady=14)
         buttons.pack(fill="x")
 
-        self.make_button(buttons, "Refresh", self.refresh_services, "#334155").pack(side="left", padx=6)
-        self.make_button(buttons, "Start", self.start_selected, "#15803d").pack(side="left", padx=6)
-        self.make_button(buttons, "Stop", self.stop_selected, "#b91c1c").pack(side="left", padx=6)
-        self.make_button(buttons, "Restart", self.restart_selected, "#c2410c").pack(side="left", padx=6)
-        
+        self.make_button(buttons, "Refresh", self.refresh_services, "#334155").pack(
+            side="left", padx=6
+        )
+        self.make_button(buttons, "Start", self.start_selected, "#15803d").pack(
+            side="left", padx=6
+        )
+        self.make_button(buttons, "Stop", self.stop_selected, "#b91c1c").pack(
+            side="left", padx=6
+        )
+        self.make_button(buttons, "Restart", self.restart_selected, "#c2410c").pack(
+            side="left", padx=6
+        )
+
     def make_button(self, parent, text, command, color):
         return tk.Button(
-                parent,
-                text=text,
-                command=command,
-                bg=color,
-                fg="white",
-                activebackground=color,
-                activeforeground="white",
-                relief="flat",
-                padx=20,
-                pady=8,
-                font=("Arial", 10, "bold"),
-            )
+            parent,
+            text=text,
+            command=command,
+            bg=color,
+            fg="white",
+            activebackground=color,
+            activeforeground="white",
+            relief="flat",
+            padx=20,
+            pady=8,
+            font=("Arial", 10, "bold"),
+        )
+
+    def get_tag(self, status):
+        if status == "active":
+            return "active"
+        if status == "inactive":
+            return "inactive"
+        return "unknown"
 
     def refresh_services(self):
         self.tree.delete(*self.tree.get_children())
         self.services = []
 
-        saved_services = load_services()
-
-        for service in saved_services:
+        def add_service(service):
             self.services.append(service)
-            tag = "active" if service.status == "active" else "inactive" if service.status == "inactive" else "unknown"
 
-        self.tree.insert(
-             "",
-             "end",
-             values=(service.scope, service.service, service.status, service.startup),
-             tags=(tag,),
-             )
-            
-
-        ok, system_services = list_service_entries("system")
-
-        if ok:
-            for service in system_services[:100]:
-                self.services.append(service)
-                tag = "active" if service.status == "active" else "inactive" if service.status == "inactive" else "unknown"
+            tag = self.get_tag(service.status)
 
             self.tree.insert(
                 "",
                 "end",
-                values=(service.scope, service.service, service.status, service.startup),
+                values=(
+                    service.scope,
+                    service.service,
+                    service.status,
+                    service.startup,
+                ),
                 tags=(tag,),
             )
-                
-        else:
+
+        saved_services = load_services()
+
+        for service in saved_services:
+            add_service(service)
+
+        ok, system_services = list_service_entries("system")
+
+        if not ok:
             messagebox.showerror("Error", str(system_services))
+            return
+
+        for service in system_services:
+            add_service(service)
 
     def get_selected_service(self):
         selected = self.tree.selection()
