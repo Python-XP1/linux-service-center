@@ -138,6 +138,7 @@ class MainWindow:
         self.services = []
 
         def add_service(service):
+
             if (
                 not service.service
                 or service.service == "●"
@@ -157,25 +158,9 @@ class MainWindow:
                     service.service,
                     service.status,
                     service.startup,
-                ),
-                tags=(tag,),
-            )
-
-            self.services.append(service)
-
-            tag = self.get_tag(service.status)
-
-            self.tree.insert(
-                "",
-                "end",
-                values=(
-                    service.scope,
-                    service.service,
-                    service.status,
-                    service.startup,
-                ),
-                tags=(tag,),
-            )
+                 ),
+                 tags=(tag,),
+    )
 
         saved_services = load_services()
 
