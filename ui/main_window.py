@@ -1,6 +1,7 @@
 # ui/main_window.py
 
 import tkinter as tk
+from datetime import datetime
 from tkinter import ttk, messagebox
 
 from core.config_loader import load_services
@@ -27,6 +28,7 @@ class MainWindow:
         self.search_var = tk.StringVar()
         self.auto_refresh_enabled = tk.BooleanVar(value=True)
         self.auto_refresh_interval_ms = 10000
+        self.refresh_status_var = tk.StringVar(value="Last refresh: never")
 
         self.build_ui()
         self.refresh_services()
@@ -163,6 +165,13 @@ class MainWindow:
             font=("Arial", 10, "bold"),
         )
         auto_refresh_check.pack(side="left", padx=12)
+        tk.Label(
+            buttons,
+            textvariable=self.refresh_status_var,
+            bg="#0f1724",
+            fg="#94a3b8",
+            font=("Arial", 10),
+        ).pack(side="left", padx=12)
 
     def make_button(self, parent, text, command, color):
         return tk.Button(
@@ -214,6 +223,8 @@ class MainWindow:
             add_service(service)
 
         self.render_services()
+        current_time = datetime.now().strftime("%H:%M:%S")
+        self.refresh_status_var.set(f"Last refresh: {current_time}")
 
     def schedule_auto_refresh(self):
         if self.auto_refresh_enabled.get():
