@@ -12,11 +12,7 @@ def build_systemctl_command(scope: str, action: str, service: str) -> list[str]:
 def run_systemctl(scope: str, action: str, service: str) -> tuple[bool, str]:
     cmd = build_systemctl_command(scope, action, service)
 
-    result = subprocess.run(
-        cmd,
-        text=True,
-        capture_output=True
-    )
+    result = subprocess.run(cmd, text=True, capture_output=True)
 
     output = result.stdout.strip() or result.stderr.strip()
     return result.returncode == 0, output
@@ -41,76 +37,83 @@ def enable_service(scope: str, service: str) -> tuple[bool, str]:
 def disable_service(scope: str, service: str) -> tuple[bool, str]:
     return run_systemctl(scope, "disable", service)
 
-def list_services(scope: str = "system"):
 
+def get_service_logs(scope: str, service: str, lines: int = 80) -> tuple[bool, str]:
     if scope == "user":
+        cmd = [
+            "journalctl",
+            "--user",
+            "-u",
+            service,
+            "-n",
+            str(lines),
+            "--no-pager",
+        ]
+    else:
+        cmd = [
+            "journalctl",
+            "-u",
+            service,
+            "-n",
+            str(lines),
+            "--no-pager",
+        ]
 
+    result = subprocess.run(cmd, text=True, capture_output=True)
+
+    output = result.stdout.strip() or result.stderr.strip() or "No logs available."
+    return result.returncode == 0, output
+
+
+def list_services(scope: str = "system"):
+    if scope == "user":
         cmd = [
             "systemctl",
             "--user",
             "list-units",
             "--type=service",
             "--all",
-            "--no-pager"
+            "--no-pager",
         ]
 
     else:
+        cmd = ["systemctl", "list-units", "--type=service", "--all", "--no-pager"]
 
-        cmd = [
-            "systemctl",
-            "list-units",
-            "--type=service",
-            "--all",
-            "--no-pager"
-        ]
-
-    result = subprocess.run(
-        cmd,
-        text=True,
-        capture_output=True
-    )
+    result = subprocess.run(cmd, text=True, capture_output=True)
 
     if result.returncode != 0:
         return False, result.stderr
 
     return True, result.stdout
 
-def parse_systemctl_list(output: str, scope: str = "system") -> list[ServiceEntry]:
 
+def parse_systemctl_list(output: str, scope: str = "system") -> list[ServiceEntry]:
     services = []
 
     for line in output.splitlines():
-
         line = line.strip()
 
         if not line:
-
             continue
 
         if line.startswith("UNIT "):
-
             continue
 
         if line.startswith("LOAD "):
-
             continue
 
         if line.startswith("Legend:"):
-
             continue
 
         if line.startswith("To show"):
-
             continue
 
         if not ".service" in line:
-
             continue
 
         parts = line.split(None, 4)
 
         if len(parts) < 4:
-
             continue
 
         unit = parts[0]
@@ -124,33 +127,25 @@ def parse_systemctl_list(output: str, scope: str = "system") -> list[ServiceEntr
         description = parts[4] if len(parts) > 4 else ""
 
         services.append(
-
             ServiceEntry(
-
                 name=description or unit,
-
                 service=unit,
-
                 scope=scope,
-
                 status=active,
-
                 startup=load,
-
-                uptime="-"
-
+                uptime="-",
             )
-
         )
 
     return services
 
-def list_service_entries(scope: str = "system") -> tuple[bool, list[ServiceEntry] | str]:
 
+def list_service_entries(
+    scope: str = "system",
+) -> tuple[bool, list[ServiceEntry] | str]:
     ok, output = list_services(scope)
 
     if not ok:
-
         return False, output
 
     return True, parse_systemctl_list(output, scope)

@@ -31,8 +31,8 @@ Regel:
 
 ## Service Management
 
-- [ ] Enable Service
-- [ ] Disable Service
+- [x] Enable Service
+- [x] Disable Service
 - [ ] Service Logs anzeigen
 - [ ] Add Service
 - [ ] Remove Service

@@ -11,6 +11,7 @@ from core.service_manager import (
     restart_service,
     enable_service,
     disable_service,
+    get_service_logs,
 )
 from assistant.backend_assistant import get_backend_info
 
@@ -141,6 +142,9 @@ class MainWindow:
             side="left", padx=6
         )
         self.make_button(buttons, "Disable", self.disable_selected, "#64748b").pack(
+            side="left", padx=6
+        )
+        self.make_button(buttons, "Logs", self.show_logs_selected, "#7c3aed").pack(
             side="left", padx=6
         )
 
@@ -313,6 +317,41 @@ class MainWindow:
         ok, message = disable_service(service.scope, service.service)
         messagebox.showinfo("Disable service", message or str(ok))
         self.refresh_services()
+
+    def show_logs_selected(self):
+        service = self.get_selected_service()
+        if not service:
+            return
+
+        ok, logs = get_service_logs(service.scope, service.service, lines=80)
+
+        if not logs:
+            logs = "No logs available."
+
+        log_window = tk.Toplevel(self.root)
+        log_window.title(f"Logs - {service.service}")
+        log_window.geometry("900x520")
+        log_window.configure(bg="#0f1724")
+
+        text = tk.Text(
+            log_window,
+            bg="#020617",
+            fg="#e5e7eb",
+            insertbackground="white",
+            relief="flat",
+            wrap="word",
+            font=("Courier New", 10),
+        )
+        text.pack(fill="both", expand=True, padx=12, pady=12)
+
+        text.insert("1.0", logs)
+        text.configure(state="disabled")
+
+        if not ok:
+            messagebox.showwarning(
+                "Logs warning",
+                "Logs could not be loaded completely. See log window for details.",
+            )
 
     def run(self):
         self.root.mainloop()
