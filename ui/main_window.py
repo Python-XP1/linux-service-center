@@ -9,6 +9,8 @@ from core.service_manager import (
     start_service,
     stop_service,
     restart_service,
+    enable_service,
+    disable_service,
 )
 from assistant.backend_assistant import get_backend_info
 
@@ -133,6 +135,12 @@ class MainWindow:
             side="left", padx=6
         )
         self.make_button(buttons, "Restart", self.restart_selected, "#c2410c").pack(
+            side="left", padx=6
+        )
+        self.make_button(buttons, "Enable", self.enable_selected, "#2563eb").pack(
+            side="left", padx=6
+        )
+        self.make_button(buttons, "Disable", self.disable_selected, "#64748b").pack(
             side="left", padx=6
         )
 
@@ -280,6 +288,30 @@ class MainWindow:
 
         ok, message = restart_service(service.scope, service.service)
         messagebox.showinfo("Restart service", message or str(ok))
+        self.refresh_services()
+
+    def enable_selected(self):
+        service = self.get_selected_service()
+        if not service:
+            return
+
+        if not self.confirm_system_action("enable", service):
+            return
+
+        ok, message = enable_service(service.scope, service.service)
+        messagebox.showinfo("Enable service", message or str(ok))
+        self.refresh_services()
+
+    def disable_selected(self):
+        service = self.get_selected_service()
+        if not service:
+            return
+
+        if not self.confirm_system_action("disable", service):
+            return
+
+        ok, message = disable_service(service.scope, service.service)
+        messagebox.showinfo("Disable service", message or str(ok))
         self.refresh_services()
 
     def run(self):
