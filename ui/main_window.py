@@ -23,6 +23,7 @@ class MainWindow:
         self.root.geometry("1100x650")
 
         self.services = []
+        self.visible_services = []
         self.search_var = tk.StringVar()
 
         self.build_ui()
@@ -201,6 +202,7 @@ class MainWindow:
 
     def render_services(self):
         self.tree.delete(*self.tree.get_children())
+        self.visible_services = []
 
         query = self.search_var.get().lower().strip()
 
@@ -217,6 +219,8 @@ class MainWindow:
 
             if query and query not in searchable_text:
                 continue
+
+            self.visible_services.append(service)
 
             tag = self.get_tag(service.status)
 
@@ -236,15 +240,18 @@ class MainWindow:
         selected = self.tree.selection()
 
         if not selected:
-            messagebox.showwarning("No selection", "Please select a service first.")
+            messagebox.showwarning(
+                "No selection",
+                "Please select a service first.",
+            )
             return None
 
         index = self.tree.index(selected[0])
 
-        if index >= len(self.services):
+        if index >= len(self.visible_services):
             return None
 
-        return self.services[index]
+        return self.visible_services[index]
 
     def confirm_system_action(self, action, service):
         if service.scope != "system":
