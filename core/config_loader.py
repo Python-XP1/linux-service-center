@@ -59,3 +59,29 @@ def add_service_to_config(scope: str, service: str):
         json.dump(data, f, indent=4)
 
     return True
+
+
+def remove_service_from_config(scope: str, service: str):
+    if not CONFIG_FILE.exists():
+        return False
+
+    with open(CONFIG_FILE, encoding="utf-8") as f:
+        data = json.load(f)
+
+    original_count = len(data)
+
+    data = [
+        item
+        for item in data
+        if not (
+            item.get("service", "") == service and item.get("scope", "system") == scope
+        )
+    ]
+
+    if len(data) == original_count:
+        return False
+
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+
+    return True

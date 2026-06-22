@@ -4,7 +4,11 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import ttk, messagebox
 
-from core.config_loader import add_service_to_config, load_services
+from core.config_loader import (
+    add_service_to_config,
+    load_services,
+    remove_service_from_config,
+)
 from core.service_manager import (
     list_service_entries,
     start_service,
@@ -166,6 +170,12 @@ class MainWindow:
             self.add_service_dialog,
             "#0ea5e9",
         ).pack(side="left", padx=6)
+        self.make_button(
+            buttons,
+            "Remove",
+            self.remove_selected_service,
+            "#be123c",
+        ).pack(side="left", padx=6)
         self.make_button(buttons, "Start", self.start_selected, "#15803d").pack(
             side="left", padx=6
         )
@@ -288,6 +298,32 @@ class MainWindow:
             padx=18,
             pady=18,
         )
+
+    def remove_selected_service(self):
+        service = self.get_selected_service()
+        if not service:
+            return
+
+        confirm = messagebox.askyesno(
+            "Remove service",
+            f"Remove this saved service from config?\n\n{service.service}\n\n"
+            "This does not stop, disable or delete the real systemd service.",
+        )
+
+        if not confirm:
+            return
+
+        was_removed = remove_service_from_config(service.scope, service.service)
+
+        if not was_removed:
+            messagebox.showwarning(
+                "Service not removed",
+                "This service is not saved in services.json.",
+            )
+            return
+
+        self.refresh_services()
+        messagebox.showinfo("Service removed", "Service removed from config.")
 
     def make_button(self, parent, text, command, color):
         return tk.Button(
