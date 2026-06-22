@@ -25,9 +25,12 @@ class MainWindow:
         self.services = []
         self.visible_services = []
         self.search_var = tk.StringVar()
+        self.auto_refresh_enabled = tk.BooleanVar(value=True)
+        self.auto_refresh_interval_ms = 10000
 
         self.build_ui()
         self.refresh_services()
+        self.schedule_auto_refresh()
 
     def build_ui(self):
         backend = get_backend_info()
@@ -148,6 +151,18 @@ class MainWindow:
         self.make_button(buttons, "Logs", self.show_logs_selected, "#7c3aed").pack(
             side="left", padx=6
         )
+        auto_refresh_check = tk.Checkbutton(
+            buttons,
+            text="Auto refresh",
+            variable=self.auto_refresh_enabled,
+            bg="#0f1724",
+            fg="white",
+            selectcolor="#121c2b",
+            activebackground="#0f1724",
+            activeforeground="white",
+            font=("Arial", 10, "bold"),
+        )
+        auto_refresh_check.pack(side="left", padx=12)
 
     def make_button(self, parent, text, command, color):
         return tk.Button(
@@ -199,6 +214,15 @@ class MainWindow:
             add_service(service)
 
         self.render_services()
+
+    def schedule_auto_refresh(self):
+        if self.auto_refresh_enabled.get():
+            self.refresh_services()
+
+        self.root.after(
+            self.auto_refresh_interval_ms,
+            self.schedule_auto_refresh,
+        )
 
     def render_services(self):
         self.tree.delete(*self.tree.get_children())
