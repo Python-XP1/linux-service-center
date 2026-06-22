@@ -269,7 +269,16 @@ class MainWindow:
                 )
                 return
 
-            add_service_to_config(scope_var.get(), service)
+            was_added = add_service_to_config(scope_var.get(), service)
+
+            if not was_added:
+                messagebox.showwarning(
+                    "Service already exists",
+                    "This service is already saved.",
+                    parent=dialog,
+                )
+                return
+
             dialog.destroy()
             self.refresh_services()
             messagebox.showinfo("Service added", "Service saved successfully.")
