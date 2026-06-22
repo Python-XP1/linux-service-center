@@ -11,14 +11,17 @@ Built for Raspberry Pi, Debian, Ubuntu and other Linux distributions.
 
 ⚠️ Linux only
 
-This application requires systemd and is not compatible with Windows.
+This application requires `systemd` and is not compatible with Windows.
 
 ⚠️ Linux Service Center is an early-stage home lab project built for personal Raspberry Pi setups. It is not intended as a production-ready server management solution.
 
-Security note:
-System services are executed through sudo.
-Whether a password is requested depends on your local sudoers configuration.
-If your user has NOPASSWD privileges, no password prompt will appear.
+## Security note
+
+System services are executed through `sudo`.
+
+Whether a password is requested depends on your local `sudoers` configuration.
+
+If your user has `NOPASSWD` privileges, no password prompt will appear.
 
 Powered by PythonXP.
 
@@ -64,21 +67,29 @@ Powered by PythonXP.
 
 Clone the repository:
 
+```bash
 git clone https://github.com/Python-XP1/linux-service-center.git
 
 cd Linux-Service-Center
+```
 
 Install dependencies:
 
+```bash
 pip install -r requirements.txt
+```
 
-Start GUI:
+## Start GUI
 
-python px_service_gui.py
+```bash
+python -m ui.app
+```
 
-Start CLI:
+## Start CLI
 
-python px_service_manager.py
+```bash
+python -m cli.app
+```
 
 ---
 
@@ -89,3 +100,39 @@ python px_service_manager.py
 - Ubuntu
 - Linux Mint
 - Other Linux distributions using systemd
+
+---
+
+## Project Structure
+
+```text
+Linux-Service-Center/
+
+assistant/
+backends/
+cli/
+core/
+diagnostics/
+legacy/
+models/
+monitoring/
+screenshots/
+ui/
+utils/
+
+README.md
+LICENSE.txt
+CHANGELOG.md
+```
+
+---
+
+## Project Status
+
+Linux Service Center is currently under active development.
+
+The project focuses on providing a simple, modern and beginner-friendly interface for managing Linux services on Raspberry Pi and Debian-based systems.
+
+Feedback and suggestions are welcome.
+
+Built with ❤️ by PythonXP.

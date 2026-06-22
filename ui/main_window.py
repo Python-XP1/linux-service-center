@@ -20,6 +20,7 @@ class MainWindow:
         self.root.geometry("1100x650")
 
         self.services = []
+        self.search_var = tk.StringVar()
 
         self.build_ui()
         self.refresh_services()
@@ -73,6 +74,30 @@ class MainWindow:
             fg="#38bdf8",
             font=("Arial", 11, "bold"),
         ).pack(side="right")
+
+        search_frame = tk.Frame(self.root, bg="#0f1724", padx=18, pady=6)
+        search_frame.pack(fill="x")
+
+        tk.Label(
+            search_frame,
+            text="Search service",
+            bg="#0f1724",
+            fg="#cbd5e1",
+            font=("Arial", 10, "bold"),
+        ).pack(side="left", padx=(0, 10))
+
+        search_entry = tk.Entry(
+            search_frame,
+            textvariable=self.search_var,
+            bg="#121c2b",
+            fg="white",
+            insertbackground="white",
+            relief="flat",
+            font=("Arial", 11),
+        )
+        search_entry.pack(side="left", fill="x", expand=True)
+
+        self.search_var.trace_add("write", lambda *_: self.render_services())
 
         self.tree = ttk.Treeview(
             self.root,
@@ -134,7 +159,6 @@ class MainWindow:
         return "unknown"
 
     def refresh_services(self):
-        self.tree.delete(*self.tree.get_children())
         self.services = []
 
         def add_service(service):
@@ -146,20 +170,6 @@ class MainWindow:
                 return
 
             self.services.append(service)
-
-            tag = self.get_tag(service.status)
-
-            self.tree.insert(
-                "",
-                "end",
-                values=(
-                    service.scope,
-                    service.service,
-                    service.status,
-                    service.startup,
-                ),
-                tags=(tag,),
-            )
 
         saved_services = load_services()
 
@@ -174,6 +184,41 @@ class MainWindow:
 
         for service in system_services:
             add_service(service)
+
+        self.render_services()
+
+    def render_services(self):
+        self.tree.delete(*self.tree.get_children())
+
+        query = self.search_var.get().lower().strip()
+
+        for service in self.services:
+            searchable_text = " ".join(
+                [
+                    service.scope,
+                    service.service,
+                    service.status,
+                    service.startup,
+                    service.name,
+                ]
+            ).lower()
+
+            if query and query not in searchable_text:
+                continue
+
+            tag = self.get_tag(service.status)
+
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    service.scope,
+                    service.service,
+                    service.status,
+                    service.startup,
+                ),
+                tags=(tag,),
+            )
 
     def get_selected_service(self):
         selected = self.tree.selection()
