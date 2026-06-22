@@ -26,6 +26,7 @@ class MainWindow:
         self.services = []
         self.visible_services = []
         self.search_var = tk.StringVar()
+        self.filter_var = tk.StringVar(value="all")
         self.auto_refresh_enabled = tk.BooleanVar(value=True)
         self.auto_refresh_interval_ms = 10000
         self.refresh_status_var = tk.StringVar(value="Last refresh: never")
@@ -105,6 +106,30 @@ class MainWindow:
             font=("Arial", 11),
         )
         search_entry.pack(side="left", fill="x", expand=True)
+
+        filter_frame = tk.Frame(self.root, bg="#0f1724", padx=18, pady=6)
+        filter_frame.pack(fill="x")
+
+        for label, value in [
+            ("All", "all"),
+            ("Active", "active"),
+            ("Inactive", "inactive"),
+            ("System", "system"),
+            ("User", "user"),
+        ]:
+            tk.Radiobutton(
+                filter_frame,
+                text=label,
+                value=value,
+                variable=self.filter_var,
+                command=self.render_services,
+                bg="#0f1724",
+                fg="white",
+                selectcolor="#121c2b",
+                activebackground="#0f1724",
+                activeforeground="white",
+                font=("Arial", 10, "bold"),
+            ).pack(side="left", padx=6)
 
         self.search_var.trace_add("write", lambda *_: self.render_services())
 
@@ -240,6 +265,7 @@ class MainWindow:
         self.visible_services = []
 
         query = self.search_var.get().lower().strip()
+        active_filter = self.filter_var.get()
 
         for service in self.services:
             searchable_text = " ".join(
@@ -253,6 +279,18 @@ class MainWindow:
             ).lower()
 
             if query and query not in searchable_text:
+                continue
+
+            if active_filter == "active" and service.status != "active":
+                continue
+
+            if active_filter == "inactive" and service.status != "inactive":
+                continue
+
+            if active_filter == "system" and service.scope != "system":
+                continue
+
+            if active_filter == "user" and service.scope != "user":
                 continue
 
             self.visible_services.append(service)
