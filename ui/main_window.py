@@ -138,7 +138,6 @@ class MainWindow:
         self.services = []
 
         def add_service(service):
-
             if (
                 not service.service
                 or service.service == "●"
@@ -158,9 +157,9 @@ class MainWindow:
                     service.service,
                     service.status,
                     service.startup,
-                 ),
-                 tags=(tag,),
-    )
+                ),
+                tags=(tag,),
+            )
 
         saved_services = load_services()
 
@@ -190,9 +189,24 @@ class MainWindow:
 
         return self.services[index]
 
+    def confirm_system_action(self, action, service):
+        if service.scope != "system":
+            return True
+
+        return messagebox.askyesno(
+            "Confirm system action",
+            f"You are about to {action} a SYSTEM service:\n\n"
+            f"{service.service}\n\n"
+            "This may affect your operating system or critical services.\n\n"
+            "Continue?",
+        )
+
     def start_selected(self):
         service = self.get_selected_service()
         if not service:
+            return
+
+        if not self.confirm_system_action("start", service):
             return
 
         ok, message = start_service(service.scope, service.service)
@@ -204,6 +218,9 @@ class MainWindow:
         if not service:
             return
 
+        if not self.confirm_system_action("stop", service):
+            return
+
         ok, message = stop_service(service.scope, service.service)
         messagebox.showinfo("Stop service", message or str(ok))
         self.refresh_services()
@@ -211,6 +228,9 @@ class MainWindow:
     def restart_selected(self):
         service = self.get_selected_service()
         if not service:
+            return
+
+        if not self.confirm_system_action("restart", service):
             return
 
         ok, message = restart_service(service.scope, service.service)
