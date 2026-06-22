@@ -24,6 +24,7 @@ Regel:
 - [x] Sicherheitsabfragen
 - [x] Live-Suche
 - [x] README aktualisiert
+- [x] Filter-Chips / Service-Filter
 
 ---
 

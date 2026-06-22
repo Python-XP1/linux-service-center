@@ -4,7 +4,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import ttk, messagebox
 
-from core.config_loader import load_services
+from core.config_loader import add_service_to_config, load_services
 from core.service_manager import (
     list_service_entries,
     start_service,
@@ -160,6 +160,12 @@ class MainWindow:
         self.make_button(buttons, "Refresh", self.refresh_services, "#334155").pack(
             side="left", padx=6
         )
+        self.make_button(
+            buttons,
+            "Add",
+            self.add_service_dialog,
+            "#0ea5e9",
+        ).pack(side="left", padx=6)
         self.make_button(buttons, "Start", self.start_selected, "#15803d").pack(
             side="left", padx=6
         )
@@ -197,6 +203,82 @@ class MainWindow:
             fg="#94a3b8",
             font=("Arial", 10),
         ).pack(side="left", padx=12)
+
+    def add_service_dialog(self):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Add Service")
+        dialog.geometry("420x240")
+        dialog.configure(bg="#0f1724")
+
+        scope_var = tk.StringVar(value="system")
+        service_var = tk.StringVar()
+
+        tk.Label(
+            dialog,
+            text="Service",
+            bg="#0f1724",
+            fg="white",
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w", padx=18, pady=(18, 6))
+
+        service_entry = tk.Entry(
+            dialog,
+            textvariable=service_var,
+            bg="#121c2b",
+            fg="white",
+            insertbackground="white",
+            relief="flat",
+            font=("Arial", 11),
+        )
+        service_entry.pack(fill="x", padx=18)
+        service_entry.focus_set()
+
+        tk.Label(
+            dialog,
+            text="Scope",
+            bg="#0f1724",
+            fg="white",
+            font=("Arial", 10, "bold"),
+        ).pack(anchor="w", padx=18, pady=(16, 6))
+
+        scope_frame = tk.Frame(dialog, bg="#0f1724")
+        scope_frame.pack(fill="x", padx=18)
+
+        for scope in ["system", "user"]:
+            tk.Radiobutton(
+                scope_frame,
+                text=scope,
+                value=scope,
+                variable=scope_var,
+                bg="#0f1724",
+                fg="white",
+                selectcolor="#121c2b",
+                activebackground="#0f1724",
+                activeforeground="white",
+                font=("Arial", 10, "bold"),
+            ).pack(side="left", padx=(0, 12))
+
+        def save_service():
+            service = service_var.get().strip()
+
+            if not service:
+                messagebox.showwarning(
+                    "Missing service",
+                    "Please enter a service name.",
+                    parent=dialog,
+                )
+                return
+
+            add_service_to_config(scope_var.get(), service)
+            dialog.destroy()
+            self.refresh_services()
+            messagebox.showinfo("Service added", "Service saved successfully.")
+
+        self.make_button(dialog, "Save", save_service, "#0ea5e9").pack(
+            anchor="e",
+            padx=18,
+            pady=18,
+        )
 
     def make_button(self, parent, text, command, color):
         return tk.Button(
