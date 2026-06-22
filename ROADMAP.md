@@ -33,7 +33,7 @@ Regel:
 
 - [x] Enable Service
 - [x] Disable Service
-- [ ] Service Logs anzeigen
+- [x] Service Logs anzeigen
 - [ ] Add Service
 - [ ] Remove Service
 
