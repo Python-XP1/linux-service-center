@@ -1,3 +1,12 @@
+import sys
+from pathlib import Path
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from backends import systemctl_backend
+from models.service_entry import ServiceEntry
+
 try:
     from pydbus import SessionBus, SystemBus
 except ImportError as error:
@@ -60,6 +69,40 @@ def list_units(scope: str = "system") -> tuple[bool, list | str]:
     return True, units
 
 
+def list_services(scope: str = "system"):
+    return list_units(scope)
+
+
+def list_service_entries(
+    scope: str = "system",
+) -> tuple[bool, list[ServiceEntry] | str]:
+    ok, result = list_units(scope)
+
+    if not ok:
+        return False, result
+
+    entries = []
+
+    for unit in result:
+        unit_name = unit.get("name", "")
+
+        if not unit_name.endswith(".service"):
+            continue
+
+        entries.append(
+            ServiceEntry(
+                name=unit.get("description") or unit_name,
+                service=unit_name,
+                scope=scope,
+                status=unit.get("active_state", "unknown"),
+                startup=unit.get("load_state", "unknown"),
+                uptime="-",
+            )
+        )
+
+    return True, entries
+
+
 def get_unit_properties(
     unit_name: str, scope: str = "system"
 ) -> tuple[bool, dict | str]:
@@ -89,9 +132,36 @@ def get_unit_properties(
     return True, properties
 
 
+def start_service(scope: str, service: str):
+    return systemctl_backend.start_service(scope, service)
+
+
+def stop_service(scope: str, service: str):
+    return systemctl_backend.stop_service(scope, service)
+
+
+def restart_service(scope: str, service: str):
+    return systemctl_backend.restart_service(scope, service)
+
+
+def enable_service(scope: str, service: str):
+    return systemctl_backend.enable_service(scope, service)
+
+
+def disable_service(scope: str, service: str):
+    return systemctl_backend.disable_service(scope, service)
+
+
+def get_service_logs(scope: str, service: str, lines: int = 80):
+    return systemctl_backend.get_service_logs(scope, service, lines)
+
+
 if __name__ == "__main__":
     ok, result = is_dbus_available("system")
     print("DBUS:", ok, result)
 
     ok, units = list_units("system")
     print("LIST:", ok, len(units) if ok else units)
+
+    ok, entries = list_service_entries("system")
+    print("ENTRIES:", ok, len(entries) if ok else entries)
