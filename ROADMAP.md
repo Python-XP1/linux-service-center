@@ -41,7 +41,7 @@ Regel:
 
 ## Diagnostics
 
-- [ ] Diagnostics Fenster migrieren
+- [x] Diagnostics Fenster migrieren
 
 ## Monitoring
 

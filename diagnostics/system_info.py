@@ -63,6 +63,52 @@ def parse_memory(memory_output: str) -> dict[str, str]:
     return memory
 
 
+def read_temperature() -> str:
+    value = run_command(
+        [
+            "sh",
+            "-c",
+            "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null | awk '{print $1/1000 \" °C\"}' || echo 'Not available'",
+        ]
+    )
+
+    if not value or value in {"Command failed.", "Not available"}:
+        return "n/a"
+
+    return value
+
+
+def read_cpu_load() -> str:
+    load = run_command(["sh", "-c", "awk '{print $1}' /proc/loadavg"])
+
+    try:
+        cpu_count = int(run_command(["nproc"]))
+        load_value = float(load)
+    except (TypeError, ValueError):
+        return "n/a"
+
+    if cpu_count <= 0:
+        return "n/a"
+
+    return f"{round((load_value / cpu_count) * 100)}%"
+
+
+def get_system_metrics() -> dict[str, str]:
+    memory = parse_memory(run_command(["free", "-h"]))
+    disk = shutil.disk_usage("/")
+
+    memory_available = memory["available"]
+    if memory_available == "Not available":
+        memory_available = "n/a"
+
+    return {
+        "temperature": read_temperature(),
+        "disk_free": f"{disk.free // (1024**3)} GB",
+        "memory_available": memory_available,
+        "cpu_load": read_cpu_load(),
+    }
+
+
 def get_system_diagnostics() -> str:
     lines = []
 

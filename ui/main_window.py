@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import ttk, messagebox
 
-from diagnostics.system_info import get_system_diagnostics
+from diagnostics.system_info import get_system_metrics
 from core.config_loader import (
     add_service_to_config,
     load_services,
@@ -41,6 +41,7 @@ class MainWindow:
         self.auto_refresh_enabled = tk.BooleanVar(value=True)
         self.auto_refresh_interval_ms = 10000
         self.refresh_status_var = tk.StringVar(value="Last refresh: never")
+        self.metrics_var = tk.StringVar(value="🌡️ n/a   💾 n/a   🧠 n/a   ⚙️ n/a")
         self.favorites = self.load_favorites()
 
         self.build_ui()
@@ -96,6 +97,18 @@ class MainWindow:
             fg="#38bdf8",
             font=("Arial", 11, "bold"),
         ).pack(side="right")
+
+        self.metrics_label = tk.Label(
+            self.root,
+            textvariable=self.metrics_var,
+            bg="#121c2b",
+            fg="#e5e7eb",
+            font=("Arial", 11, "bold"),
+            anchor="w",
+            padx=18,
+            pady=8,
+        )
+        self.metrics_label.pack(fill="x", padx=18, pady=(0, 6))
 
         search_frame = tk.Frame(self.root, bg="#0f1724", padx=18, pady=6)
         search_frame.pack(fill="x")
@@ -212,9 +225,6 @@ class MainWindow:
             side="left", padx=6
         )
         self.make_button(buttons, "Logs", self.show_logs_selected, "#7c3aed").pack(
-            side="left", padx=6
-        )
-        self.make_button(buttons, "Diagnostics", self.show_diagnostics, "#0891b2").pack(
             side="left", padx=6
         )
         auto_refresh_check = tk.Checkbutton(
@@ -465,6 +475,17 @@ class MainWindow:
         self.render_services()
         current_time = datetime.now().strftime("%H:%M:%S")
         self.refresh_status_var.set(f"Last refresh: {current_time}")
+        self.update_system_metrics()
+
+    def update_system_metrics(self):
+        metrics = get_system_metrics()
+
+        self.metrics_var.set(
+            f"🌡️ {metrics['temperature']}   "
+            f"💾 Free: {metrics['disk_free']}   "
+            f"🧠 RAM: {metrics['memory_available']}   "
+            f"⚙️ CPU: {metrics['cpu_load']}"
+        )
 
     def schedule_auto_refresh(self):
         if self.auto_refresh_enabled.get():
@@ -739,28 +760,6 @@ class MainWindow:
         text.pack(fill="both", expand=True, padx=12, pady=12)
 
         text.insert("1.0", details)
-        text.configure(state="disabled")
-
-    def show_diagnostics(self):
-        diagnostics = get_system_diagnostics()
-
-        diag_window = tk.Toplevel(self.root)
-        diag_window.title("Diagnostics")
-        diag_window.geometry("800x520")
-        diag_window.configure(bg="#0f1724")
-
-        text = tk.Text(
-            diag_window,
-            bg="#020617",
-            fg="#e5e7eb",
-            insertbackground="white",
-            relief="flat",
-            wrap="word",
-            font=("Courier New", 10),
-        )
-        text.pack(fill="both", expand=True, padx=12, pady=12)
-
-        text.insert("1.0", diagnostics)
         text.configure(state="disabled")
 
     def run(self):
