@@ -3,6 +3,7 @@
 import json
 import subprocess
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from tkinter import ttk, messagebox
@@ -225,6 +226,9 @@ class MainWindow:
             side="left", padx=6
         )
         self.make_button(buttons, "Logs", self.show_logs_selected, "#7c3aed").pack(
+            side="left", padx=6
+        )
+        self.make_button(buttons, "Open URL", self.open_selected_url, "#0f766e").pack(
             side="left", padx=6
         )
         auto_refresh_check = tk.Checkbutton(
@@ -683,6 +687,22 @@ class MainWindow:
                 "Logs warning",
                 "Logs could not be loaded completely. See log window for details.",
             )
+
+    def open_selected_url(self):
+        service = self.get_selected_service()
+        if not service:
+            return
+
+        url = getattr(service, "url", "").strip()
+
+        if not url:
+            messagebox.showwarning(
+                "No URL",
+                "No URL configured for this service.",
+            )
+            return
+
+        webbrowser.open(url)
 
     def show_service_details(self):
         selected = self.tree.selection()

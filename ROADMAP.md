@@ -45,10 +45,10 @@ Regel:
 
 ## Monitoring
 
-- [ ] CPU Monitoring
-- [ ] RAM Monitoring
-- [ ] Temperatur Monitoring
-- [ ] Speicherplatz Monitoring
+- [x] CPU Monitoring
+- [x] RAM Monitoring
+- [x] Temperatur Monitoring
+- [x] Speicherplatz Monitoring
 
 ## URL Shortcuts
 
@@ -71,7 +71,7 @@ Regel:
 
 ## Komfortfunktionen
 
-- [ ] Favoriten
+- [x] Favoriten
 - [ ] Dashboard
 - [ ] Benachrichtigungen
 - [ ] Dark / Light Theme
