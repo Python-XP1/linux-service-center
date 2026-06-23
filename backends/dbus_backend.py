@@ -132,6 +132,20 @@ def get_unit_properties(
     return True, properties
 
 
+def uses_systemctl_action_fallback() -> bool:
+    return True
+
+
+def get_backend_capabilities() -> dict:
+    return {
+        "listing": "dbus",
+        "details": "dbus",
+        "actions": "systemctl",
+        "logs": "systemctl",
+        "fallback_enabled": True,
+    }
+
+
 def start_service(scope: str, service: str):
     return systemctl_backend.start_service(scope, service)
 
@@ -165,3 +179,6 @@ if __name__ == "__main__":
 
     ok, entries = list_service_entries("system")
     print("ENTRIES:", ok, len(entries) if ok else entries)
+
+    print("CAPABILITIES:", get_backend_capabilities())
+    print("ACTION FALLBACK:", uses_systemctl_action_fallback())
