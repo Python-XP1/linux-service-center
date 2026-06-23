@@ -52,7 +52,7 @@ Regel:
 
 ## URL Shortcuts
 
-- [ ] URL Shortcuts migrieren
+- [x] URL Shortcuts migrieren
 
 ---
 
@@ -60,7 +60,7 @@ Regel:
 
 ## Neues Backend
 
-- [ ] dbus_backend.py erstellen
+- [x] dbus_backend.py erstellen
 - [ ] Backend-Auswahl erweitern
 - [ ] systemctl als Fallback behalten
 - [ ] DBus vollständig testen
