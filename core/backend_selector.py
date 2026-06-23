@@ -7,6 +7,9 @@ if __name__ == "__main__":
 from backends import dbus_backend, systemctl_backend
 
 
+ACTIVE_BACKEND = "systemctl"
+
+
 def get_backend(preferred="systemctl"):
     if preferred == "dbus":
         ok, _ = dbus_backend.is_dbus_available("system")
