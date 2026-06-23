@@ -4,6 +4,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import ttk, messagebox
 
+from diagnostics.system_info import get_system_diagnostics
 from core.config_loader import (
     add_service_to_config,
     load_services,
@@ -192,6 +193,9 @@ class MainWindow:
             side="left", padx=6
         )
         self.make_button(buttons, "Logs", self.show_logs_selected, "#7c3aed").pack(
+            side="left", padx=6
+        )
+        self.make_button(buttons, "Diagnostics", self.show_diagnostics, "#0891b2").pack(
             side="left", padx=6
         )
         auto_refresh_check = tk.Checkbutton(
@@ -559,6 +563,28 @@ class MainWindow:
                 "Logs warning",
                 "Logs could not be loaded completely. See log window for details.",
             )
+
+    def show_diagnostics(self):
+        diagnostics = get_system_diagnostics()
+
+        diag_window = tk.Toplevel(self.root)
+        diag_window.title("Diagnostics")
+        diag_window.geometry("800x520")
+        diag_window.configure(bg="#0f1724")
+
+        text = tk.Text(
+            diag_window,
+            bg="#020617",
+            fg="#e5e7eb",
+            insertbackground="white",
+            relief="flat",
+            wrap="word",
+            font=("Courier New", 10),
+        )
+        text.pack(fill="both", expand=True, padx=12, pady=12)
+
+        text.insert("1.0", diagnostics)
+        text.configure(state="disabled")
 
     def run(self):
         self.root.mainloop()

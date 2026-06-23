@@ -36,7 +36,7 @@ Regel:
 - [x] Disable Service
 - [x] Service Logs anzeigen
 - [x] Add Service
-- [ ] Remove Service
+- [x] Remove Service
 - [x] Auto-Refresh
 
 ## Diagnostics
