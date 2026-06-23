@@ -7,11 +7,13 @@ if __name__ == "__main__":
 from backends import dbus_backend, systemctl_backend
 
 
-ACTIVE_BACKEND = "systemctl"
+ACTIVE_BACKEND = "dbus"
 
 
-def get_backend(preferred="systemctl"):
-    if preferred == "dbus":
+def get_backend(preferred=None):
+    selected = preferred or ACTIVE_BACKEND
+
+    if selected == "dbus":
         ok, _ = dbus_backend.is_dbus_available("system")
 
         if ok:
@@ -20,8 +22,10 @@ def get_backend(preferred="systemctl"):
     return systemctl_backend
 
 
-def get_backend_name(preferred="systemctl"):
-    if preferred == "dbus":
+def get_backend_name(preferred=None):
+    selected = preferred or ACTIVE_BACKEND
+
+    if selected == "dbus":
         ok, _ = dbus_backend.is_dbus_available("system")
 
         if ok:
