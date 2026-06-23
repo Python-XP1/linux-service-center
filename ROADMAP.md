@@ -62,8 +62,8 @@ Regel:
 
 - [x] dbus_backend.py erstellen
 - [x] Backend-Auswahl erweitern
-- [ ] systemctl als Fallback behalten
-- [ ] DBus vollständig testen
+- [x] systemctl als Fallback behalten
+- [x] DBus vollständig testen
 
 ---
 

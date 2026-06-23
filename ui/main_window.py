@@ -9,6 +9,12 @@ from pathlib import Path
 from tkinter import ttk, messagebox
 
 from diagnostics.system_info import get_system_metrics
+from core.app_settings import (
+    get_mode,
+    get_skip_advanced_warning,
+    set_mode,
+    set_skip_advanced_warning,
+)
 from core.config_loader import (
     add_service_to_config,
     load_services,
@@ -43,6 +49,7 @@ class MainWindow:
         self.auto_refresh_interval_ms = 10000
         self.refresh_status_var = tk.StringVar(value="Last refresh: never")
         self.metrics_var = tk.StringVar(value="🌡️ n/a   💾 n/a   🧠 n/a   ⚙️ n/a")
+        self.safe_mode = tk.StringVar(value=get_mode())
         self.favorites = self.load_favorites()
 
         self.build_ui()
@@ -98,6 +105,37 @@ class MainWindow:
             fg="#38bdf8",
             font=("Arial", 11, "bold"),
         ).pack(side="right")
+
+        mode_frame = tk.Frame(header, bg="#0f1724")
+        mode_frame.pack(side="right", padx=16)
+
+        tk.Radiobutton(
+            mode_frame,
+            text="Normal Mode",
+            value="normal",
+            variable=self.safe_mode,
+            command=self.switch_to_normal_mode,
+            bg="#0f1724",
+            fg="white",
+            selectcolor="#121c2b",
+            activebackground="#0f1724",
+            activeforeground="white",
+            font=("Arial", 10, "bold"),
+        ).pack(side="left", padx=4)
+
+        tk.Radiobutton(
+            mode_frame,
+            text="Advanced Mode",
+            value="advanced",
+            variable=self.safe_mode,
+            command=self.switch_to_advanced_mode,
+            bg="#0f1724",
+            fg="white",
+            selectcolor="#121c2b",
+            activebackground="#0f1724",
+            activeforeground="white",
+            font=("Arial", 10, "bold"),
+        ).pack(side="left", padx=4)
 
         self.metrics_label = tk.Label(
             self.root,
@@ -198,18 +236,20 @@ class MainWindow:
             self.toggle_selected_favorite,
             "#f59e0b",
         ).pack(side="left", padx=6)
-        self.make_button(
+        self.add_button = self.make_button(
             buttons,
             "Add",
             self.add_service_dialog,
             "#0ea5e9",
-        ).pack(side="left", padx=6)
-        self.make_button(
+        )
+        self.add_button.pack(side="left", padx=6)
+        self.remove_button = self.make_button(
             buttons,
             "Remove",
             self.remove_selected_service,
             "#be123c",
-        ).pack(side="left", padx=6)
+        )
+        self.remove_button.pack(side="left", padx=6)
         self.make_button(buttons, "Start", self.start_selected, "#15803d").pack(
             side="left", padx=6
         )
@@ -219,12 +259,14 @@ class MainWindow:
         self.make_button(buttons, "Restart", self.restart_selected, "#c2410c").pack(
             side="left", padx=6
         )
-        self.make_button(buttons, "Enable", self.enable_selected, "#2563eb").pack(
-            side="left", padx=6
+        self.enable_button = self.make_button(
+            buttons, "Enable", self.enable_selected, "#2563eb"
         )
-        self.make_button(buttons, "Disable", self.disable_selected, "#64748b").pack(
-            side="left", padx=6
+        self.enable_button.pack(side="left", padx=6)
+        self.disable_button = self.make_button(
+            buttons, "Disable", self.disable_selected, "#64748b"
         )
+        self.disable_button.pack(side="left", padx=6)
         self.make_button(buttons, "Logs", self.show_logs_selected, "#7c3aed").pack(
             side="left", padx=6
         )
@@ -250,6 +292,121 @@ class MainWindow:
             fg="#94a3b8",
             font=("Arial", 10),
         ).pack(side="left", padx=12)
+
+        self.update_action_button_state()
+
+    def switch_to_normal_mode(self):
+        set_mode("normal")
+        self.safe_mode.set("normal")
+        self.update_action_button_state()
+
+    def switch_to_advanced_mode(self):
+        if not get_skip_advanced_warning():
+            warning_result = self.show_advanced_warning()
+
+            if not warning_result["accepted"]:
+                self.safe_mode.set("normal")
+                return
+
+            if warning_result["skip_warning"]:
+                set_skip_advanced_warning(True)
+
+        result = subprocess.run(
+            ["sudo", "-v"],
+            text=True,
+            capture_output=True,
+        )
+
+        if result.returncode != 0:
+            messagebox.showerror(
+                "Permission denied",
+                "Advanced Mode could not be enabled.",
+            )
+            self.safe_mode.set("normal")
+            set_mode("normal")
+            self.update_action_button_state()
+            return
+
+        set_mode("advanced")
+        self.safe_mode.set("advanced")
+        self.update_action_button_state()
+
+    def show_advanced_warning(self):
+        result = {
+            "accepted": False,
+            "skip_warning": False,
+        }
+        warning = tk.Toplevel(self.root)
+        warning.title("Advanced Mode Warning")
+        warning.configure(bg="#0f1724")
+        warning.transient(self.root)
+        warning.grab_set()
+
+        skip_var = tk.BooleanVar(value=False)
+
+        text = (
+            "Editing, modifying, adding or removing systemd services may lead to "
+            "unexpected behavior.\n\n"
+            "In the worst case, your system may become unstable or lose critical "
+            "functionality.\n\n"
+            "Advanced Mode is intended for experienced users only."
+        )
+
+        tk.Label(
+            warning,
+            text=text,
+            bg="#0f1724",
+            fg="white",
+            justify="left",
+            wraplength=480,
+            padx=18,
+            pady=18,
+        ).pack(fill="x")
+
+        tk.Checkbutton(
+            warning,
+            text="Do not show this warning again",
+            variable=skip_var,
+            bg="#0f1724",
+            fg="white",
+            selectcolor="#121c2b",
+            activebackground="#0f1724",
+            activeforeground="white",
+        ).pack(anchor="w", padx=18)
+
+        button_row = tk.Frame(warning, bg="#0f1724")
+        button_row.pack(fill="x", padx=18, pady=18)
+
+        def cancel():
+            result["accepted"] = False
+            warning.destroy()
+
+        def accept():
+            result["accepted"] = True
+            result["skip_warning"] = skip_var.get()
+            warning.destroy()
+
+        self.make_button(button_row, "Cancel", cancel, "#64748b").pack(
+            side="right", padx=6
+        )
+        self.make_button(button_row, "OK", accept, "#2563eb").pack(side="right", padx=6)
+
+        self.root.wait_window(warning)
+        return result
+
+    def is_advanced_mode(self):
+        return self.safe_mode.get() == "advanced"
+
+    def update_action_button_state(self):
+        state = "normal" if self.is_advanced_mode() else "disabled"
+
+        for button in [
+            self.add_button,
+            self.remove_button,
+            self.enable_button,
+            self.disable_button,
+        ]:
+            button.config(state=state)
 
     def load_favorites(self):
         if not FAVORITES_FILE.exists():
@@ -317,6 +474,13 @@ class MainWindow:
         self.render_services()
 
     def add_service_dialog(self):
+        if not self.is_advanced_mode():
+            messagebox.showwarning(
+                "Advanced Mode required",
+                "This action is only available in Advanced Mode.",
+            )
+            return
+
         dialog = tk.Toplevel(self.root)
         dialog.title("Add Service")
         dialog.geometry("420x240")
@@ -402,6 +566,13 @@ class MainWindow:
         )
 
     def remove_selected_service(self):
+        if not self.is_advanced_mode():
+            messagebox.showwarning(
+                "Advanced Mode required",
+                "This action is only available in Advanced Mode.",
+            )
+            return
+
         service = self.get_selected_service()
         if not service:
             return
@@ -630,6 +801,13 @@ class MainWindow:
         self.refresh_services()
 
     def enable_selected(self):
+        if not self.is_advanced_mode():
+            messagebox.showwarning(
+                "Advanced Mode required",
+                "This action is only available in Advanced Mode.",
+            )
+            return
+
         service = self.get_selected_service()
         if not service:
             return
@@ -642,6 +820,13 @@ class MainWindow:
         self.refresh_services()
 
     def disable_selected(self):
+        if not self.is_advanced_mode():
+            messagebox.showwarning(
+                "Advanced Mode required",
+                "This action is only available in Advanced Mode.",
+            )
+            return
+
         service = self.get_selected_service()
         if not service:
             return
