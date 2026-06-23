@@ -311,16 +311,18 @@ class MainWindow:
             if warning_result["skip_warning"]:
                 set_skip_advanced_warning(True)
 
-        result = subprocess.run(
-            ["sudo", "-v"],
-            text=True,
-            capture_output=True,
-        )
+        password = self.ask_sudo_password()
 
-        if result.returncode != 0:
+        if password is None:
+            self.safe_mode.set("normal")
+            set_mode("normal")
+            self.update_action_button_state()
+            return
+
+        if not self.verify_sudo_password(password):
             messagebox.showerror(
                 "Permission denied",
-                "Advanced Mode could not be enabled.",
+                "Invalid password or administrator authentication failed.",
             )
             self.safe_mode.set("normal")
             set_mode("normal")
@@ -338,9 +340,9 @@ class MainWindow:
         }
         warning = tk.Toplevel(self.root)
         warning.title("Advanced Mode Warning")
+        warning.geometry("560x280")
         warning.configure(bg="#0f1724")
         warning.transient(self.root)
-        warning.grab_set()
 
         skip_var = tk.BooleanVar(value=False)
 
@@ -381,6 +383,8 @@ class MainWindow:
             result["accepted"] = False
             warning.destroy()
 
+        warning.protocol("WM_DELETE_WINDOW", cancel)
+
         def accept():
             result["accepted"] = True
             result["skip_warning"] = skip_var.get()
@@ -391,8 +395,80 @@ class MainWindow:
         )
         self.make_button(button_row, "OK", accept, "#2563eb").pack(side="right", padx=6)
 
+        warning.update_idletasks()
+        warning.wait_visibility()
+        warning.grab_set()
+        warning.focus_set()
+
         self.root.wait_window(warning)
         return result
+
+    def ask_sudo_password(self) -> str | None:
+        result = {"password": None}
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Administrator Authentication")
+        dialog.configure(bg="#0f1724")
+        dialog.transient(self.root)
+
+        tk.Label(
+            dialog,
+            text="Enter your password to enable Advanced Mode.",
+            bg="#0f1724",
+            fg="white",
+            justify="left",
+            padx=18,
+            pady=18,
+        ).pack(fill="x")
+
+        password_var = tk.StringVar()
+        password_entry = tk.Entry(
+            dialog,
+            textvariable=password_var,
+            show="*",
+            bg="#121c2b",
+            fg="white",
+            insertbackground="white",
+            relief="flat",
+            font=("Arial", 11),
+        )
+        password_entry.pack(fill="x", padx=18)
+
+        button_row = tk.Frame(dialog, bg="#0f1724")
+        button_row.pack(fill="x", padx=18, pady=18)
+
+        def cancel():
+            result["password"] = None
+            dialog.destroy()
+
+        def accept(event=None):
+            result["password"] = password_var.get()
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        password_entry.bind("<Return>", accept)
+
+        self.make_button(button_row, "Cancel", cancel, "#64748b").pack(
+            side="right", padx=6
+        )
+        self.make_button(button_row, "OK", accept, "#2563eb").pack(side="right", padx=6)
+
+        dialog.update_idletasks()
+        dialog.wait_visibility()
+        dialog.grab_set()
+        dialog.focus_set()
+        password_entry.focus_set()
+
+        self.root.wait_window(dialog)
+        return result["password"]
+
+    def verify_sudo_password(self, password: str) -> bool:
+        result = subprocess.run(
+            ["sudo", "-S", "-v"],
+            input=password + "\n",
+            text=True,
+            capture_output=True,
+        )
+        return result.returncode == 0
 
     def is_advanced_mode(self):
         return self.safe_mode.get() == "advanced"

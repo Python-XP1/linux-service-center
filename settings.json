@@ -1,4 +1,4 @@
 {
-    "mode": "normal",
-    "skip_advanced_warning": false
+    "mode": "advanced",
+    "skip_advanced_warning": true
 }
