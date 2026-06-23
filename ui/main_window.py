@@ -1,7 +1,10 @@
 # ui/main_window.py
 
+import json
+import subprocess
 import tkinter as tk
 from datetime import datetime
+from pathlib import Path
 from tkinter import ttk, messagebox
 
 from diagnostics.system_info import get_system_diagnostics
@@ -22,6 +25,9 @@ from core.service_manager import (
 from assistant.backend_assistant import get_backend_info
 
 
+FAVORITES_FILE = Path("favorites.json")
+
+
 class MainWindow:
     def __init__(self):
         self.root = tk.Tk()
@@ -35,6 +41,7 @@ class MainWindow:
         self.auto_refresh_enabled = tk.BooleanVar(value=True)
         self.auto_refresh_interval_ms = 10000
         self.refresh_status_var = tk.StringVar(value="Last refresh: never")
+        self.favorites = self.load_favorites()
 
         self.build_ui()
         self.refresh_services()
@@ -167,6 +174,18 @@ class MainWindow:
         )
         self.make_button(
             buttons,
+            "Details",
+            self.show_service_details,
+            "#475569",
+        ).pack(side="left", padx=6)
+        self.make_button(
+            buttons,
+            "Favorite",
+            self.toggle_selected_favorite,
+            "#f59e0b",
+        ).pack(side="left", padx=6)
+        self.make_button(
+            buttons,
             "Add",
             self.add_service_dialog,
             "#0ea5e9",
@@ -217,6 +236,71 @@ class MainWindow:
             fg="#94a3b8",
             font=("Arial", 10),
         ).pack(side="left", padx=12)
+
+    def load_favorites(self):
+        if not FAVORITES_FILE.exists():
+            self.save_favorites(set())
+            return set()
+
+        try:
+            with open(FAVORITES_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return set()
+
+        return {
+            (item.get("scope", "system"), item.get("service", ""))
+            for item in data
+            if item.get("service", "")
+        }
+
+    def save_favorites(self, favorites):
+        data = [
+            {
+                "service": service,
+                "scope": scope,
+            }
+            for scope, service in sorted(favorites)
+        ]
+
+        with open(FAVORITES_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+
+    def favorite_key(self, service):
+        return (service.scope, service.service)
+
+    def is_favorite(self, service):
+        return self.favorite_key(service) in self.favorites
+
+    def toggle_selected_favorite(self):
+        selected = self.tree.selection()
+
+        if not selected:
+            messagebox.showwarning(
+                "No service selected",
+                "No service selected.",
+            )
+            return
+
+        index = self.tree.index(selected[0])
+
+        if index >= len(self.visible_services):
+            messagebox.showwarning(
+                "No service selected",
+                "No service selected.",
+            )
+            return
+
+        service = self.visible_services[index]
+        favorite = self.favorite_key(service)
+
+        if favorite in self.favorites:
+            self.favorites.remove(favorite)
+        else:
+            self.favorites.add(favorite)
+
+        self.save_favorites(self.favorites)
+        self.render_services()
 
     def add_service_dialog(self):
         dialog = tk.Toplevel(self.root)
@@ -397,6 +481,7 @@ class MainWindow:
 
         query = self.search_var.get().lower().strip()
         active_filter = self.filter_var.get()
+        filtered_services = []
 
         for service in self.services:
             searchable_text = " ".join(
@@ -424,16 +509,30 @@ class MainWindow:
             if active_filter == "user" and service.scope != "user":
                 continue
 
+            filtered_services.append(service)
+
+        filtered_services.sort(
+            key=lambda service: (
+                not self.is_favorite(service),
+                service.service.lower(),
+            )
+        )
+
+        for service in filtered_services:
             self.visible_services.append(service)
 
             tag = self.get_tag(service.status)
+            service_name = service.service
+
+            if self.is_favorite(service):
+                service_name = f"★ {service_name}"
 
             self.tree.insert(
                 "",
                 "end",
                 values=(
                     service.scope,
-                    service.service,
+                    service_name,
                     service.status,
                     service.startup,
                 ),
@@ -563,6 +662,84 @@ class MainWindow:
                 "Logs warning",
                 "Logs could not be loaded completely. See log window for details.",
             )
+
+    def show_service_details(self):
+        selected = self.tree.selection()
+
+        if not selected:
+            messagebox.showwarning(
+                "No service selected",
+                "No service selected.",
+            )
+            return
+
+        index = self.tree.index(selected[0])
+
+        if index >= len(self.visible_services):
+            messagebox.showwarning(
+                "No service selected",
+                "No service selected.",
+            )
+            return
+
+        service = self.visible_services[index]
+
+        if service.scope == "user":
+            cmd = ["systemctl", "--user", "show", service.service]
+        else:
+            cmd = ["systemctl", "show", service.service]
+
+        fields = [
+            "Id",
+            "Description",
+            "LoadState",
+            "ActiveState",
+            "UnitFileState",
+            "MainPID",
+            "ExecMainStartTimestamp",
+            "FragmentPath",
+        ]
+
+        try:
+            result = subprocess.run(cmd, text=True, capture_output=True)
+        except OSError:
+            details = "Unable to read service details."
+        else:
+            if result.returncode != 0:
+                details = "Unable to read service details."
+            else:
+                values = {}
+
+                for line in result.stdout.splitlines():
+                    if "=" not in line:
+                        continue
+
+                    key, value = line.split("=", 1)
+                    if key in fields:
+                        values[key] = value
+
+                details = "\n".join(
+                    f"{field}: {values.get(field, '-')}" for field in fields
+                )
+
+        details_window = tk.Toplevel(self.root)
+        details_window.title("Service Details")
+        details_window.geometry("760x420")
+        details_window.configure(bg="#0f1724")
+
+        text = tk.Text(
+            details_window,
+            bg="#020617",
+            fg="#e5e7eb",
+            insertbackground="white",
+            relief="flat",
+            wrap="word",
+            font=("Courier New", 10),
+        )
+        text.pack(fill="both", expand=True, padx=12, pady=12)
+
+        text.insert("1.0", details)
+        text.configure(state="disabled")
 
     def show_diagnostics(self):
         diagnostics = get_system_diagnostics()
