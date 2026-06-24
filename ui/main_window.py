@@ -10,7 +10,6 @@ from tkinter import ttk, messagebox
 
 from diagnostics.system_info import get_system_metrics
 from core.app_settings import (
-    get_mode,
     get_skip_advanced_warning,
     set_mode,
     set_skip_advanced_warning,
@@ -49,7 +48,10 @@ class MainWindow:
         self.auto_refresh_interval_ms = 10000
         self.refresh_status_var = tk.StringVar(value="Last refresh: never")
         self.metrics_var = tk.StringVar(value="🌡️ n/a   💾 n/a   🧠 n/a   ⚙️ n/a")
-        self.safe_mode = tk.StringVar(value=get_mode())
+        self.advanced_mode = False
+        self.safe_mode = tk.StringVar(value="normal")
+        self.advanced_timeout_ms = 300000
+        self.advanced_timer_id = None
         self.favorites = self.load_favorites()
 
         self.build_ui()
@@ -217,6 +219,7 @@ class MainWindow:
         self.tree.tag_configure("unknown", background="#1e293b", foreground="#cbd5e1")
 
         self.tree.pack(fill="both", expand=True, padx=18, pady=10)
+        self.tree.bind("<<TreeviewSelect>>", self.register_user_activity, add="+")
 
         buttons = tk.Frame(self.root, bg="#0f1724", padx=18, pady=14)
         buttons.pack(fill="x")
@@ -306,8 +309,13 @@ class MainWindow:
         ).pack(side="left", padx=12)
 
         self.update_action_button_state()
+        self.root.bind_all("<Motion>", self.register_user_activity, add="+")
+        self.root.bind_all("<Button>", self.register_user_activity, add="+")
+        self.root.bind_all("<Key>", self.register_user_activity, add="+")
 
     def switch_to_normal_mode(self):
+        self.advanced_mode = False
+        self.stop_advanced_timer()
         set_mode("normal")
         self.safe_mode.set("normal")
         self.update_action_button_state()
@@ -317,6 +325,7 @@ class MainWindow:
             warning_result = self.show_advanced_warning()
 
             if not warning_result["accepted"]:
+                self.advanced_mode = False
                 self.safe_mode.set("normal")
                 return
 
@@ -326,6 +335,7 @@ class MainWindow:
         password = self.ask_sudo_password()
 
         if password is None:
+            self.advanced_mode = False
             self.safe_mode.set("normal")
             set_mode("normal")
             self.update_action_button_state()
@@ -336,14 +346,17 @@ class MainWindow:
                 "Permission denied",
                 "Invalid password or administrator authentication failed.",
             )
+            self.advanced_mode = False
             self.safe_mode.set("normal")
             set_mode("normal")
             self.update_action_button_state()
             return
 
+        self.advanced_mode = True
         set_mode("advanced")
         self.safe_mode.set("advanced")
         self.update_action_button_state()
+        self.start_advanced_timer()
 
     def show_advanced_warning(self):
         result = {
@@ -483,7 +496,44 @@ class MainWindow:
         return result.returncode == 0
 
     def is_advanced_mode(self):
-        return self.safe_mode.get() == "advanced"
+        return self.advanced_mode
+
+    def start_advanced_timer(self):
+        if self.advanced_timer_id is not None:
+            self.root.after_cancel(self.advanced_timer_id)
+
+        self.advanced_timer_id = self.root.after(
+            self.advanced_timeout_ms,
+            self.advanced_timeout,
+        )
+
+    def stop_advanced_timer(self):
+        if self.advanced_timer_id is not None:
+            self.root.after_cancel(self.advanced_timer_id)
+            self.advanced_timer_id = None
+
+    def reset_advanced_timer(self):
+        if not self.advanced_mode:
+            return
+
+        self.start_advanced_timer()
+
+    def advanced_timeout(self):
+        self.advanced_timer_id = None
+        self.advanced_mode = False
+        set_mode("normal")
+        self.safe_mode.set("normal")
+        self.update_action_button_state()
+        messagebox.showinfo(
+            "Advanced Mode expired",
+            "Advanced Mode expired due to inactivity.",
+        )
+
+    def register_user_activity(self, event=None):
+        if not self.advanced_mode:
+            return
+
+        self.reset_advanced_timer()
 
     def update_action_button_state(self):
         state = "normal" if self.is_advanced_mode() else "disabled"
