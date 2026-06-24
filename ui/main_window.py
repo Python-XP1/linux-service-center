@@ -250,15 +250,27 @@ class MainWindow:
             "#be123c",
         )
         self.remove_button.pack(side="left", padx=6)
-        self.make_button(buttons, "Start", self.start_selected, "#15803d").pack(
-            side="left", padx=6
+        self.start_button = self.make_button(
+            buttons,
+            "Start",
+            self.start_selected,
+            "#15803d",
         )
-        self.make_button(buttons, "Stop", self.stop_selected, "#b91c1c").pack(
-            side="left", padx=6
+        self.start_button.pack(side="left", padx=6)
+        self.stop_button = self.make_button(
+            buttons,
+            "Stop",
+            self.stop_selected,
+            "#b91c1c",
         )
-        self.make_button(buttons, "Restart", self.restart_selected, "#c2410c").pack(
-            side="left", padx=6
+        self.stop_button.pack(side="left", padx=6)
+        self.restart_button = self.make_button(
+            buttons,
+            "Restart",
+            self.restart_selected,
+            "#c2410c",
         )
+        self.restart_button.pack(side="left", padx=6)
         self.enable_button = self.make_button(
             buttons, "Enable", self.enable_selected, "#2563eb"
         )
@@ -479,6 +491,9 @@ class MainWindow:
         for button in [
             self.add_button,
             self.remove_button,
+            self.start_button,
+            self.stop_button,
+            self.restart_button,
             self.enable_button,
             self.disable_button,
         ]:
@@ -841,6 +856,13 @@ class MainWindow:
         )
 
     def start_selected(self):
+        if not self.is_advanced_mode():
+            messagebox.showwarning(
+                "Advanced Mode required",
+                "This action is only available in Advanced Mode.",
+            )
+            return
+
         service = self.get_selected_service()
         if not service:
             return
@@ -853,6 +875,13 @@ class MainWindow:
         self.refresh_services()
 
     def stop_selected(self):
+        if not self.is_advanced_mode():
+            messagebox.showwarning(
+                "Advanced Mode required",
+                "This action is only available in Advanced Mode.",
+            )
+            return
+
         service = self.get_selected_service()
         if not service:
             return
@@ -865,6 +894,13 @@ class MainWindow:
         self.refresh_services()
 
     def restart_selected(self):
+        if not self.is_advanced_mode():
+            messagebox.showwarning(
+                "Advanced Mode required",
+                "This action is only available in Advanced Mode.",
+            )
+            return
+
         service = self.get_selected_service()
         if not service:
             return
