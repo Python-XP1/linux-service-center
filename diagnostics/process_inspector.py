@@ -1,0 +1,209 @@
+from pathlib import Path
+import sys
+
+
+PROC_ROOT = Path("/proc")
+
+
+def read_text_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except (PermissionError, FileNotFoundError, OSError):
+        return ""
+
+
+def read_link(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except (PermissionError, FileNotFoundError, OSError):
+        return ""
+
+
+def parse_status(status: str) -> tuple[str, int]:
+    name = ""
+    ppid = 0
+
+    for line in status.splitlines():
+        if line.startswith("Name:"):
+            name = line.partition(":")[2].strip()
+        elif line.startswith("PPid:"):
+            value = line.partition(":")[2].strip()
+            try:
+                ppid = int(value)
+            except ValueError:
+                ppid = 0
+
+    return name, ppid
+
+
+def get_process_info(pid: int) -> dict:
+    proc_dir = PROC_ROOT / str(pid)
+
+    status = read_text_file(proc_dir / "status")
+    if not status:
+        return {}
+
+    name, ppid = parse_status(status)
+    cmdline = read_text_file(proc_dir / "cmdline").replace("\x00", " ").strip()
+    cgroup = read_text_file(proc_dir / "cgroup").strip()
+    exe = read_link(proc_dir / "exe")
+    cwd = read_link(proc_dir / "cwd")
+
+    return {
+        "pid": pid,
+        "ppid": ppid,
+        "name": name,
+        "cmdline": cmdline,
+        "exe": exe,
+        "cwd": cwd,
+        "cgroup": cgroup,
+    }
+
+
+def list_processes() -> list[dict]:
+    processes = []
+
+    try:
+        entries = list(PROC_ROOT.iterdir())
+    except (PermissionError, FileNotFoundError, OSError):
+        return processes
+
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+
+        process = get_process_info(int(entry.name))
+        if process:
+            processes.append(process)
+
+    return processes
+
+
+def find_processes_by_query(query: str) -> list[dict]:
+    normalized_query = query.lower().strip()
+    if not normalized_query:
+        return []
+
+    matches = []
+
+    for process in list_processes():
+        searchable_text = " ".join(
+            [
+                process.get("name", ""),
+                process.get("cmdline", ""),
+                process.get("exe", ""),
+                process.get("cwd", ""),
+                process.get("cgroup", ""),
+            ]
+        ).lower()
+
+        if normalized_query in searchable_text:
+            matches.append(process)
+
+    return matches
+
+
+def get_parent_chain(pid: int) -> list[dict]:
+    chain = []
+    current_pid = pid
+    seen_pids = set()
+
+    for _ in range(20):
+        if current_pid <= 0 or current_pid in seen_pids:
+            break
+
+        seen_pids.add(current_pid)
+        process = get_process_info(current_pid)
+        if not process:
+            break
+
+        chain.append(process)
+        parent_pid = process.get("ppid", 0)
+
+        if parent_pid in (0, 1):
+            break
+
+        current_pid = parent_pid
+
+    return chain
+
+
+def detect_process_owner(process: dict) -> str:
+    cgroup = process.get("cgroup", "")
+    cmdline = process.get("cmdline", "")
+    ppid = process.get("ppid", 0)
+
+    if "system.slice" in cgroup:
+        return "systemd system service"
+
+    if "user.slice" in cgroup:
+        return "systemd user session/service"
+
+    if "app.py" in cmdline:
+        return "application-managed process"
+
+    if ppid > 1:
+        return "child process"
+
+    return "unknown"
+
+
+def analyze_query(query: str) -> list[dict]:
+    results = []
+
+    for process in find_processes_by_query(query):
+        results.append(
+            {
+                "process": process,
+                "owner_hint": detect_process_owner(process),
+                "parent_chain": get_parent_chain(process.get("pid", 0)),
+            }
+        )
+
+    return results
+
+
+def print_process_result(result: dict):
+    process = result["process"]
+
+    print("Process:")
+    print(f"  PID: {process.get('pid', '')}")
+    print(f"  PPID: {process.get('ppid', '')}")
+    print(f"  Name: {process.get('name', '')}")
+    print(f"  Command: {process.get('cmdline', '')}")
+    print(f"  Exe: {process.get('exe', '')}")
+    print(f"  CWD: {process.get('cwd', '')}")
+    print(f"  CGroup: {process.get('cgroup', '')}")
+    print(f"  Owner hint: {result.get('owner_hint', '')}")
+    print()
+    print("Parent chain:")
+
+    for parent in result.get("parent_chain", []):
+        print(
+            "  "
+            f"{parent.get('pid', '')} -> "
+            f"{parent.get('name', '')} -> "
+            f"{parent.get('cmdline', '')}"
+        )
+
+    print()
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python diagnostics/process_inspector.py <query>")
+        return
+
+    query = sys.argv[1]
+    results = analyze_query(query)
+
+    if not results:
+        print("No matching processes found.")
+        return
+
+    for result in results:
+        print_process_result(result)
+
+
+if __name__ == "__main__":
+    main()
