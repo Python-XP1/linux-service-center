@@ -174,16 +174,26 @@ def extract_unit_from_cgroup(cgroup: str) -> str:
     return ""
 
 
+def extract_slice_from_cgroup(cgroup: str) -> str:
+    for segment in reversed(cgroup.split("/")):
+        if segment.endswith(".slice"):
+            return segment
+
+    return ""
+
+
 def detect_manager(process: dict) -> dict:
     cgroup = process.get("cgroup", "")
     cmdline = process.get("cmdline", "")
     ppid = process.get("ppid", 0)
     unit = extract_unit_from_cgroup(cgroup)
+    slice_name = extract_slice_from_cgroup(cgroup)
 
     if "system.slice" in cgroup:
         return {
             "type": "systemd-system",
             "unit": unit,
+            "slice": slice_name,
             "description": "Managed by systemd as a system service.",
         }
 
@@ -191,6 +201,7 @@ def detect_manager(process: dict) -> dict:
         return {
             "type": "systemd-user",
             "unit": unit,
+            "slice": slice_name,
             "description": "Managed by systemd as a user service.",
         }
 
@@ -198,6 +209,7 @@ def detect_manager(process: dict) -> dict:
         return {
             "type": "user-session",
             "unit": unit,
+            "slice": slice_name,
             "description": "Running inside a user session.",
         }
 
@@ -205,6 +217,7 @@ def detect_manager(process: dict) -> dict:
         return {
             "type": "application-managed",
             "unit": unit,
+            "slice": slice_name,
             "description": "Likely managed by an application or custom launcher.",
         }
 
@@ -212,12 +225,14 @@ def detect_manager(process: dict) -> dict:
         return {
             "type": "child-process",
             "unit": unit,
+            "slice": slice_name,
             "description": "Child process of another process.",
         }
 
     return {
         "type": "unknown",
         "unit": unit,
+        "slice": slice_name,
         "description": "No clear process manager detected.",
     }
 
@@ -279,6 +294,28 @@ def build_respawn_test_commands(process: dict) -> list[str]:
         "sleep 2",
         f'python diagnostics/process_inspector.py "{search_term}"',
     ]
+
+
+def build_slice_recovery_commands(manager: dict) -> list[str]:
+    slice_name = manager.get("slice", "")
+    manager_type = manager.get("type", "")
+
+    if not slice_name:
+        return []
+
+    if manager_type == "systemd-user":
+        return [
+            f"systemctl --user status {slice_name}",
+            f"systemctl --user stop {slice_name}",
+        ]
+
+    if manager_type == "systemd-system":
+        return [
+            f"systemctl status {slice_name}",
+            f"sudo systemctl stop {slice_name}",
+        ]
+
+    return []
 
 
 def detect_restart_policy(manager: dict) -> str:
@@ -410,6 +447,7 @@ def analyze_query(query: str) -> list[dict]:
                 "manager": manager,
                 "suggested_commands": build_suggested_commands(process, manager),
                 "respawn_test_commands": build_respawn_test_commands(process),
+                "slice_recovery_commands": build_slice_recovery_commands(manager),
                 "parent_chain": get_parent_chain(process.get("pid", 0)),
             }
         )
@@ -435,6 +473,8 @@ def print_process_result(result: dict):
     print("Detected manager:")
     print(f"  Type: {manager.get('type', '')}")
     print(f"  Unit: {manager.get('unit', '')}")
+    if manager.get("slice"):
+        print(f"  Slice: {manager.get('slice', '')}")
     print(f"  Description: {manager.get('description', '')}")
     print(f"  Health: {manager.get('health', 'unknown').title()}")
     print(f"  Restart policy: {manager.get('restart_policy', 'unknown')}")
@@ -470,6 +510,18 @@ def print_process_result(result: dict):
     for command in respawn_test_commands:
         print(f"  {command}")
     print()
+
+    slice_recovery_commands = result.get("slice_recovery_commands", [])
+    if slice_recovery_commands:
+        print("Slice recovery:")
+        print(
+            "  If stopping the unit does not work, the surrounding slice may still "
+            "hold the process."
+        )
+        print("  These commands can be run manually:")
+        for command in slice_recovery_commands:
+            print(f"  {command}")
+        print()
 
     print("Parent chain:")
 
