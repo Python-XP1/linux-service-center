@@ -518,6 +518,63 @@ def build_recovery_advice(process: dict, manager: dict) -> dict:
     }
 
 
+def build_group_key(process: dict, manager: dict) -> str:
+    if manager.get("unit"):
+        return f"{manager.get('type', '')}:{manager.get('unit', '')}"
+
+    if manager.get("slice"):
+        return f"{manager.get('type', '')}:{manager.get('slice', '')}"
+
+    return f"pid:{process.get('pid', 0)}"
+
+
+def build_confidence_score(
+    process: dict, manager: dict, parent_chain: list[dict]
+) -> dict:
+    score = 0
+    signals = []
+    warnings = []
+
+    if manager.get("unit"):
+        score += 30
+        signals.append("Systemd unit was detected from cgroup.")
+
+    if manager.get("type") != "unknown":
+        score += 20
+        signals.append(f"Manager type detected: {manager.get('type', '')}.")
+
+    if manager.get("slice"):
+        score += 15
+        signals.append("Systemd slice was detected from cgroup.")
+
+    if manager.get("restart_policy") != "unknown":
+        score += 15
+        signals.append(f"Restart policy detected: {manager.get('restart_policy', '')}.")
+
+    if parent_chain:
+        score += 10
+        signals.append("Parent chain was resolved.")
+
+    if manager.get("health") == "healthy":
+        score += 10
+        signals.append("Systemd unit appears healthy.")
+
+    if manager.get("health") == "orphaned":
+        warnings.append("Unit from cgroup is not loaded.")
+
+    if manager.get("type") == "unknown":
+        warnings.append("No clear process manager detected.")
+
+    if not parent_chain:
+        warnings.append("Parent chain could not be resolved.")
+
+    return {
+        "score": min(score, 100),
+        "signals": signals,
+        "warnings": warnings,
+    }
+
+
 def analyze_query(query: str) -> list[dict]:
     results = []
 
@@ -525,20 +582,50 @@ def analyze_query(query: str) -> list[dict]:
         manager = detect_manager(process)
         manager = verify_systemd_unit(manager)
         manager["restart_policy"] = detect_restart_policy(manager)
+        parent_chain = get_parent_chain(process.get("pid", 0))
         results.append(
             {
                 "process": process,
                 "owner_hint": detect_process_owner(process),
                 "manager": manager,
+                "group_key": build_group_key(process, manager),
+                "confidence": build_confidence_score(process, manager, parent_chain),
                 "suggested_commands": build_suggested_commands(process, manager),
                 "respawn_test_commands": build_respawn_test_commands(process),
                 "slice_recovery_commands": build_slice_recovery_commands(manager),
                 "recovery_advice": build_recovery_advice(process, manager),
-                "parent_chain": get_parent_chain(process.get("pid", 0)),
+                "parent_chain": parent_chain,
             }
         )
 
     return results
+
+
+def group_results(results: list[dict]) -> list[dict]:
+    groups = []
+    grouped_by_key = {}
+
+    for result in results:
+        group_key = result.get("group_key", "")
+        process = result.get("process", {})
+
+        if group_key not in grouped_by_key:
+            group = {
+                "group_key": group_key,
+                "primary": result,
+                "process_count": 0,
+                "pids": [],
+                "processes": [],
+            }
+            grouped_by_key[group_key] = group
+            groups.append(group)
+
+        group = grouped_by_key[group_key]
+        group["process_count"] += 1
+        group["pids"].append(process.get("pid", 0))
+        group["processes"].append(process)
+
+    return groups
 
 
 def print_process_result(result: dict):
@@ -578,6 +665,26 @@ def print_process_result(result: dict):
     if manager.get("warning"):
         print(f"  Warning: {manager.get('warning')}")
     print()
+
+    confidence = result.get("confidence", {})
+    if confidence:
+        print("Confidence:")
+        print(f"  Score: {confidence.get('score', 0)}/100")
+        print("  Signals:")
+        signals = confidence.get("signals", [])
+        if signals:
+            for signal in signals:
+                print(f"    - {signal}")
+        else:
+            print("    - None")
+        print("  Warnings:")
+        warnings = confidence.get("warnings", [])
+        if warnings:
+            for warning in warnings:
+                print(f"    - {warning}")
+        else:
+            print("    - None")
+        print()
 
     suggested_commands = result.get("suggested_commands", [])
     print("Suggested commands:")
@@ -636,6 +743,28 @@ def print_process_result(result: dict):
     print()
 
 
+def print_group_result(group: dict):
+    print("Process group:")
+    print(f"  Key: {group.get('group_key', '')}")
+    print(f"  Process count: {group.get('process_count', 0)}")
+    pids = ", ".join(str(pid) for pid in group.get("pids", []))
+    print(f"  PIDs: {pids}")
+    print()
+
+    print_process_result(group["primary"])
+
+    if group.get("process_count", 0) > 1:
+        print("Related processes:")
+        for process in group.get("processes", []):
+            print(
+                "  "
+                f"{process.get('pid', '')} -> "
+                f"{process.get('name', '')} -> "
+                f"{process.get('cmdline', '')}"
+            )
+        print()
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python diagnostics/process_inspector.py <query>")
@@ -648,8 +777,10 @@ def main():
         print("No matching processes found.")
         return
 
-    for result in results:
-        print_process_result(result)
+    groups = group_results(results)
+
+    for group in groups:
+        print_group_result(group)
 
 
 if __name__ == "__main__":
