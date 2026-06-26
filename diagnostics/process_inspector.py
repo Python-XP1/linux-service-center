@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import subprocess
 import sys
 
 
@@ -221,6 +222,41 @@ def detect_manager(process: dict) -> dict:
     }
 
 
+def verify_systemd_unit(manager: dict) -> dict:
+    manager = manager.copy()
+    manager_type = manager.get("type", "")
+    unit = manager.get("unit", "")
+
+    if manager_type not in {"systemd-system", "systemd-user"}:
+        manager.setdefault("unit_exists", None)
+        manager.setdefault("health", "unknown")
+        manager.setdefault("warning", "")
+        return manager
+
+    if manager_type == "systemd-user":
+        command = ["systemctl", "--user", "status", unit]
+    else:
+        command = ["systemctl", "status", unit]
+
+    try:
+        result = subprocess.run(command, text=True, capture_output=True)
+    except (PermissionError, FileNotFoundError, OSError):
+        result = None
+
+    if result is not None and result.returncode == 0:
+        manager["unit_exists"] = True
+        manager["health"] = "healthy"
+        manager["warning"] = ""
+        return manager
+
+    manager["unit_exists"] = False
+    manager["health"] = "orphaned"
+    manager[
+        "warning"
+    ] = "Process belongs to a service cgroup but the systemd unit no longer exists."
+    return manager
+
+
 def build_suggested_commands(process: dict, manager: dict) -> list[str]:
     manager_type = manager.get("type", "")
     unit = manager.get("unit", "")
@@ -228,20 +264,42 @@ def build_suggested_commands(process: dict, manager: dict) -> list[str]:
     ppid = process.get("ppid", 0)
 
     if manager_type == "systemd-system" and unit:
-        return [
+        commands = [
             f"sudo systemctl status {unit}",
             f"sudo systemctl stop {unit}",
             f"sudo systemctl disable {unit}",
             f"sudo journalctl -u {unit} -n 80 --no-pager",
         ]
 
+        if manager.get("health") == "orphaned":
+            commands.extend(
+                [
+                    "systemctl list-units --all",
+                    "systemctl list-unit-files",
+                    "systemd-cgls",
+                ]
+            )
+
+        return commands
+
     if manager_type == "systemd-user" and unit:
-        return [
+        commands = [
             f"systemctl --user status {unit}",
             f"systemctl --user stop {unit}",
             f"systemctl --user disable {unit}",
             f"journalctl --user -u {unit} -n 80 --no-pager",
         ]
+
+        if manager.get("health") == "orphaned":
+            commands.extend(
+                [
+                    "systemctl --user list-units --all",
+                    "systemctl --user list-unit-files",
+                    "systemd-cgls --user",
+                ]
+            )
+
+        return commands
 
     if manager_type == "user-session":
         return [
@@ -282,6 +340,7 @@ def analyze_query(query: str) -> list[dict]:
 
     for process in find_processes_by_query(query):
         manager = detect_manager(process)
+        manager = verify_systemd_unit(manager)
         results.append(
             {
                 "process": process,
@@ -314,6 +373,9 @@ def print_process_result(result: dict):
     print(f"  Type: {manager.get('type', '')}")
     print(f"  Unit: {manager.get('unit', '')}")
     print(f"  Description: {manager.get('description', '')}")
+    print(f"  Health: {manager.get('health', 'unknown').title()}")
+    if manager.get("warning"):
+        print(f"  Warning: {manager.get('warning')}")
     print()
 
     suggested_commands = result.get("suggested_commands", [])
