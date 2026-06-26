@@ -1,7 +1,9 @@
 from pathlib import Path
+import os
 import sys
 
 
+INSPECTOR_SCRIPT = "process_inspector.py"
 PROC_ROOT = Path("/proc")
 
 
@@ -60,6 +62,16 @@ def get_process_info(pid: int) -> dict:
     }
 
 
+def is_inspector_process(process: dict) -> bool:
+    pid = process.get("pid", 0)
+    cmdline = process.get("cmdline", "")
+
+    if pid == os.getpid():
+        return True
+
+    return INSPECTOR_SCRIPT in cmdline
+
+
 def list_processes() -> list[dict]:
     processes = []
 
@@ -73,7 +85,7 @@ def list_processes() -> list[dict]:
             continue
 
         process = get_process_info(int(entry.name))
-        if process:
+        if process and not is_inspector_process(process):
             processes.append(process)
 
     return processes

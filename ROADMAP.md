@@ -91,9 +91,9 @@ Regeln:
 
 ## Session Sicherheit
 
-- [ ] Advanced Mode Session Timeout (5 Minuten)
-- [ ] Automatischer Wechsel zurück zu Normal Mode
-- [ ] Re-Authentifizierung erforderlich
+- [x] Advanced Mode Session Timeout (5 Minuten)
+- [x] Automatischer Wechsel zurück zu Normal Mode
+- [x] Re-Authentifizierung erforderlich
 
 ## Benutzerführung
 
@@ -156,6 +156,21 @@ Regeln:
 - [ ] PythonXP Integration
 
 ---
+
+## Process Inspector
+
+- [ ] Detect orphan processes
+- [ ] Detect parent process
+- [ ] Show process tree
+- [ ] Detect Restart=always
+- [ ] Detect user services
+- [ ] Detect app-managed processes
+- [ ] Process ownership analysis
+- [ ] Detect stale/missing systemd unit from cgroup
+- [ ] Suggest systemd-cgls / list-units / list-unit-files checks
+- [ ] Detect respawn source when unit is not loaded
+
+--
 
 # Regeln
 
