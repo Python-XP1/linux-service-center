@@ -85,8 +85,13 @@ def find_processes_by_query(query: str) -> list[dict]:
         return []
 
     matches = []
+    query_pid = int(normalized_query) if normalized_query.isdigit() else None
 
     for process in list_processes():
+        if query_pid is not None and process.get("pid") == query_pid:
+            matches.append(process)
+            continue
+
         searchable_text = " ".join(
             [
                 process.get("name", ""),
@@ -148,14 +153,129 @@ def detect_process_owner(process: dict) -> str:
     return "unknown"
 
 
+def extract_unit_from_cgroup(cgroup: str) -> str:
+    for segment in reversed(cgroup.split("/")):
+        if segment.endswith(".service"):
+            return segment
+
+    return ""
+
+
+def detect_manager(process: dict) -> dict:
+    cgroup = process.get("cgroup", "")
+    cmdline = process.get("cmdline", "")
+    ppid = process.get("ppid", 0)
+    unit = extract_unit_from_cgroup(cgroup)
+
+    if "system.slice" in cgroup:
+        return {
+            "type": "systemd-system",
+            "unit": unit,
+            "description": "Managed by systemd as a system service.",
+        }
+
+    if "user.slice" in cgroup and unit:
+        return {
+            "type": "systemd-user",
+            "unit": unit,
+            "description": "Managed by systemd as a user service.",
+        }
+
+    if "user.slice" in cgroup:
+        return {
+            "type": "user-session",
+            "unit": unit,
+            "description": "Running inside a user session.",
+        }
+
+    if "app.py" in cmdline:
+        return {
+            "type": "application-managed",
+            "unit": unit,
+            "description": "Likely managed by an application or custom launcher.",
+        }
+
+    if ppid > 1:
+        return {
+            "type": "child-process",
+            "unit": unit,
+            "description": "Child process of another process.",
+        }
+
+    return {
+        "type": "unknown",
+        "unit": unit,
+        "description": "No clear process manager detected.",
+    }
+
+
+def build_suggested_commands(process: dict, manager: dict) -> list[str]:
+    manager_type = manager.get("type", "")
+    unit = manager.get("unit", "")
+    pid = process.get("pid", 0)
+    ppid = process.get("ppid", 0)
+
+    if manager_type == "systemd-system" and unit:
+        return [
+            f"sudo systemctl status {unit}",
+            f"sudo systemctl stop {unit}",
+            f"sudo systemctl disable {unit}",
+            f"sudo journalctl -u {unit} -n 80 --no-pager",
+        ]
+
+    if manager_type == "systemd-user" and unit:
+        return [
+            f"systemctl --user status {unit}",
+            f"systemctl --user stop {unit}",
+            f"systemctl --user disable {unit}",
+            f"journalctl --user -u {unit} -n 80 --no-pager",
+        ]
+
+    if manager_type == "user-session":
+        return [
+            f"ps -fp {pid}",
+            f"pstree -sp {pid}",
+        ]
+
+    if manager_type == "application-managed":
+        commands = [
+            f"ps -fp {pid}",
+            f"pstree -sp {pid}",
+        ]
+
+        if ppid > 1:
+            commands.append(f"ps -fp {ppid}")
+
+        return commands
+
+    if manager_type == "child-process":
+        commands = [
+            f"ps -fp {pid}",
+        ]
+
+        if ppid > 1:
+            commands.append(f"ps -fp {ppid}")
+
+        commands.append(f"pstree -sp {pid}")
+        return commands
+
+    return [
+        f"ps -fp {pid}",
+        f"pstree -sp {pid}",
+    ]
+
+
 def analyze_query(query: str) -> list[dict]:
     results = []
 
     for process in find_processes_by_query(query):
+        manager = detect_manager(process)
         results.append(
             {
                 "process": process,
                 "owner_hint": detect_process_owner(process),
+                "manager": manager,
+                "suggested_commands": build_suggested_commands(process, manager),
                 "parent_chain": get_parent_chain(process.get("pid", 0)),
             }
         )
@@ -176,6 +296,23 @@ def print_process_result(result: dict):
     print(f"  CGroup: {process.get('cgroup', '')}")
     print(f"  Owner hint: {result.get('owner_hint', '')}")
     print()
+
+    manager = result.get("manager", {})
+    print("Detected manager:")
+    print(f"  Type: {manager.get('type', '')}")
+    print(f"  Unit: {manager.get('unit', '')}")
+    print(f"  Description: {manager.get('description', '')}")
+    print()
+
+    suggested_commands = result.get("suggested_commands", [])
+    print("Suggested commands:")
+    if suggested_commands:
+        for command in suggested_commands:
+            print(f"  {command}")
+    else:
+        print("  No suggestions available.")
+    print()
+
     print("Parent chain:")
 
     for parent in result.get("parent_chain", []):
