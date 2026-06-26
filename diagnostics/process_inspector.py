@@ -433,6 +433,91 @@ def build_suggested_commands(process: dict, manager: dict) -> list[str]:
     ]
 
 
+def build_recovery_advice(process: dict, manager: dict) -> dict:
+    manager_type = manager.get("type", "")
+    unit = manager.get("unit", "")
+    slice_name = manager.get("slice", "")
+    health = manager.get("health", "unknown")
+    restart_policy = manager.get("restart_policy", "unknown")
+
+    if health == "orphaned":
+        details = [
+            f"Unit from cgroup: {unit}",
+            "The process may be attached to a stale cgroup or transient unit.",
+        ]
+        recommended_order = [
+            "List loaded units and unit files.",
+            "Inspect the cgroup tree.",
+        ]
+
+        if slice_name:
+            details.append(f"Surrounding slice: {slice_name}")
+            recommended_order.append("Try stopping the surrounding slice.")
+
+        recommended_order.append("Restart the user manager only as a last resort.")
+
+        return {
+            "summary": "Process belongs to a service cgroup, but the unit is not loaded.",
+            "details": details,
+            "recommended_order": recommended_order,
+        }
+
+    if manager_type in {"systemd-user", "systemd-system"} and restart_policy in {
+        "always",
+        "on-failure",
+        "on-abnormal",
+        "on-watchdog",
+        "on-success",
+    }:
+        recommended_order = [
+            "Stop the service unit first.",
+            "Disable the service unit if it should not start again.",
+            "Run the respawn test again.",
+        ]
+
+        if slice_name:
+            recommended_order.append(
+                "If the unit cannot be stopped, inspect or stop the surrounding slice."
+            )
+
+        recommended_order.append("Inspect logs if the process still comes back.")
+
+        return {
+            "summary": "Process is managed by systemd and may restart automatically.",
+            "details": [
+                f"Unit: {unit}",
+                f"Restart policy: {restart_policy}",
+                "Killing only the PID is usually not enough.",
+            ],
+            "recommended_order": recommended_order,
+        }
+
+    if manager_type == "application-managed":
+        return {
+            "summary": "Process may be managed by an application or launcher script.",
+            "details": [
+                "Look at the parent process and command line.",
+                "The application may restart child processes itself.",
+            ],
+            "recommended_order": [
+                "Inspect the parent process.",
+                "Stop the parent process or launcher.",
+                "Run the respawn test again.",
+            ],
+        }
+
+    return {
+        "summary": "No specific recovery advice available.",
+        "details": [
+            "Use process information and parent chain for manual analysis.",
+        ],
+        "recommended_order": [
+            "Inspect the process.",
+            "Inspect the parent chain.",
+        ],
+    }
+
+
 def analyze_query(query: str) -> list[dict]:
     results = []
 
@@ -448,6 +533,7 @@ def analyze_query(query: str) -> list[dict]:
                 "suggested_commands": build_suggested_commands(process, manager),
                 "respawn_test_commands": build_respawn_test_commands(process),
                 "slice_recovery_commands": build_slice_recovery_commands(manager),
+                "recovery_advice": build_recovery_advice(process, manager),
                 "parent_chain": get_parent_chain(process.get("pid", 0)),
             }
         )
@@ -521,6 +607,20 @@ def print_process_result(result: dict):
         print("  These commands can be run manually:")
         for command in slice_recovery_commands:
             print(f"  {command}")
+        print()
+
+    recovery_advice = result.get("recovery_advice", {})
+    if recovery_advice:
+        print("Recovery advisor:")
+        print(f"  Summary: {recovery_advice.get('summary', '')}")
+        print()
+        print("  Details:")
+        for detail in recovery_advice.get("details", []):
+            print(f"    - {detail}")
+        print()
+        print("  Recommended order:")
+        for index, item in enumerate(recovery_advice.get("recommended_order", []), 1):
+            print(f"    {index}. {item}")
         print()
 
     print("Parent chain:")
