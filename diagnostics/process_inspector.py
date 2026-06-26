@@ -257,6 +257,67 @@ def verify_systemd_unit(manager: dict) -> dict:
     return manager
 
 
+def choose_respawn_search_term(process: dict) -> str:
+    cmdline = process.get("cmdline", "")
+    pid = process.get("pid", 0)
+
+    if "/home/pi/Einkaufsliste/app.py" in cmdline:
+        return "/home/pi/Einkaufsliste/app.py"
+
+    if cmdline:
+        return cmdline.split()[0]
+
+    return str(pid)
+
+
+def build_respawn_test_commands(process: dict) -> list[str]:
+    pid = process.get("pid", 0)
+    search_term = choose_respawn_search_term(process)
+
+    return [
+        f"kill {pid}",
+        "sleep 2",
+        f'python diagnostics/process_inspector.py "{search_term}"',
+    ]
+
+
+def detect_restart_policy(manager: dict) -> str:
+    manager_type = manager.get("type", "")
+    unit = manager.get("unit", "")
+
+    if not unit:
+        return "unknown"
+
+    if manager_type == "systemd-system":
+        command = ["systemctl", "show", unit, "-p", "Restart", "--value"]
+    elif manager_type == "systemd-user":
+        command = [
+            "systemctl",
+            "--user",
+            "show",
+            unit,
+            "-p",
+            "Restart",
+            "--value",
+        ]
+    else:
+        return "unknown"
+
+    try:
+        result = subprocess.run(command, text=True, capture_output=True)
+    except (PermissionError, FileNotFoundError, OSError):
+        return "unknown"
+
+    if result.returncode != 0:
+        return "unknown"
+
+    value = result.stdout.strip()
+    if not value:
+        return "unknown"
+
+    return value
+
+
 def build_suggested_commands(process: dict, manager: dict) -> list[str]:
     manager_type = manager.get("type", "")
     unit = manager.get("unit", "")
@@ -341,12 +402,14 @@ def analyze_query(query: str) -> list[dict]:
     for process in find_processes_by_query(query):
         manager = detect_manager(process)
         manager = verify_systemd_unit(manager)
+        manager["restart_policy"] = detect_restart_policy(manager)
         results.append(
             {
                 "process": process,
                 "owner_hint": detect_process_owner(process),
                 "manager": manager,
                 "suggested_commands": build_suggested_commands(process, manager),
+                "respawn_test_commands": build_respawn_test_commands(process),
                 "parent_chain": get_parent_chain(process.get("pid", 0)),
             }
         )
@@ -374,6 +437,18 @@ def print_process_result(result: dict):
     print(f"  Unit: {manager.get('unit', '')}")
     print(f"  Description: {manager.get('description', '')}")
     print(f"  Health: {manager.get('health', 'unknown').title()}")
+    print(f"  Restart policy: {manager.get('restart_policy', 'unknown')}")
+    if manager.get("restart_policy") in {
+        "always",
+        "on-failure",
+        "on-abnormal",
+        "on-watchdog",
+        "on-success",
+    }:
+        print(
+            "  Respawn risk: This process may restart automatically due to its "
+            "systemd restart policy."
+        )
     if manager.get("warning"):
         print(f"  Warning: {manager.get('warning')}")
     print()
@@ -385,6 +460,15 @@ def print_process_result(result: dict):
             print(f"  {command}")
     else:
         print("  No suggestions available.")
+    print()
+
+    respawn_test_commands = result.get("respawn_test_commands", [])
+    print("Respawn test:")
+    print(
+        "  These commands can be run manually to check whether the process comes back:"
+    )
+    for command in respawn_test_commands:
+        print(f"  {command}")
     print()
 
     print("Parent chain:")
