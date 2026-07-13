@@ -38,10 +38,9 @@ class DiagnosticsWindow:
 
         self.window = tk.Toplevel(parent)
         self.window.title("Diagnostics")
-        self.window.geometry("1120x720")
-        self.window.minsize(920, 600)
         self.window.configure(bg=BG)
         self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self._set_responsive_geometry()
 
         self.query_var = tk.StringVar(master=self.window)
         self.status_var = tk.StringVar(master=self.window, value="Ready.")
@@ -52,6 +51,18 @@ class DiagnosticsWindow:
         self.refresh_system_overview()
         self.refresh_mode_state()
         self.window.after(500, self._poll_mode)
+
+    def _set_responsive_geometry(self):
+        screen_width = self.window.winfo_screenwidth()
+        screen_height = self.window.winfo_screenheight()
+
+        width = max(700, min(1180, screen_width - 40))
+        height = max(460, min(760, screen_height - 80))
+        x = max(0, (screen_width - width) // 2)
+        y = max(0, (screen_height - height) // 2)
+
+        self.window.geometry(f"{width}x{height}+{x}+{y}")
+        self.window.minsize(min(760, width), min(520, height))
 
     def _configure_styles(self):
         style = ttk.Style(self.window)
@@ -90,6 +101,7 @@ class DiagnosticsWindow:
     def _build_ui(self):
         header = tk.Frame(self.window, bg=BG, padx=18, pady=14)
         header.pack(fill="x")
+        header.grid_columnconfigure(1, weight=1)
 
         tk.Label(
             header,
@@ -97,7 +109,7 @@ class DiagnosticsWindow:
             bg=BG,
             fg="white",
             font=("Arial", 24, "bold"),
-        ).pack(side="left")
+        ).grid(row=0, column=0, sticky="w")
 
         tk.Label(
             header,
@@ -105,7 +117,10 @@ class DiagnosticsWindow:
             bg=BG,
             fg=MUTED,
             font=("Arial", 10),
-        ).pack(side="right")
+            justify="right",
+            anchor="e",
+            wraplength=520,
+        ).grid(row=0, column=1, sticky="e", padx=(20, 0))
 
         notebook = ttk.Notebook(self.window, style="Diagnostics.TNotebook")
         notebook.pack(fill="both", expand=True, padx=18, pady=(0, 12))
@@ -129,20 +144,43 @@ class DiagnosticsWindow:
             "#334155",
         ).pack(side="left")
 
+        text_frame = tk.Frame(parent, bg=BG)
+        text_frame.pack(fill="both", expand=True, pady=(0, 8))
+        text_frame.grid_rowconfigure(0, weight=1)
+        text_frame.grid_columnconfigure(0, weight=1)
+
         self.system_text = tk.Text(
-            parent,
+            text_frame,
             bg=TEXT_BG,
             fg=TEXT_FG,
             insertbackground="white",
             relief="flat",
-            wrap="word",
+            wrap="none",
             font=("Courier New", 10),
         )
-        self.system_text.pack(fill="both", expand=True, pady=(0, 8))
+        system_y = ttk.Scrollbar(
+            text_frame,
+            orient="vertical",
+            command=self.system_text.yview,
+        )
+        system_x = ttk.Scrollbar(
+            text_frame,
+            orient="horizontal",
+            command=self.system_text.xview,
+        )
+        self.system_text.configure(
+            yscrollcommand=system_y.set,
+            xscrollcommand=system_x.set,
+        )
+
+        self.system_text.grid(row=0, column=0, sticky="nsew")
+        system_y.grid(row=0, column=1, sticky="ns")
+        system_x.grid(row=1, column=0, sticky="ew")
 
     def _build_inspector_tab(self, parent):
         search_frame = tk.Frame(parent, bg=BG, pady=10)
         search_frame.pack(fill="x")
+        search_frame.grid_columnconfigure(1, weight=1)
 
         tk.Label(
             search_frame,
@@ -150,7 +188,7 @@ class DiagnosticsWindow:
             bg=BG,
             fg="#cbd5e1",
             font=("Arial", 10, "bold"),
-        ).pack(side="left", padx=(0, 10))
+        ).grid(row=0, column=0, sticky="w", padx=(0, 10))
 
         self.query_entry = tk.Entry(
             search_frame,
@@ -161,7 +199,7 @@ class DiagnosticsWindow:
             relief="flat",
             font=("Arial", 11),
         )
-        self.query_entry.pack(side="left", fill="x", expand=True)
+        self.query_entry.grid(row=0, column=1, sticky="ew")
         self.query_entry.bind("<Return>", self.start_analysis)
 
         self.analyze_button = self._make_button(
@@ -170,10 +208,11 @@ class DiagnosticsWindow:
             self.start_analysis,
             "#2563eb",
         )
-        self.analyze_button.pack(side="left", padx=(10, 0))
+        self.analyze_button.grid(row=0, column=2, sticky="e", padx=(10, 0))
 
         info_row = tk.Frame(parent, bg=BG)
         info_row.pack(fill="x", pady=(0, 8))
+        info_row.grid_columnconfigure(1, weight=1)
 
         tk.Label(
             info_row,
@@ -181,7 +220,8 @@ class DiagnosticsWindow:
             bg=BG,
             fg=ACCENT,
             font=("Arial", 10, "bold"),
-        ).pack(side="left")
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
 
         tk.Label(
             info_row,
@@ -189,7 +229,10 @@ class DiagnosticsWindow:
             bg=BG,
             fg=MUTED,
             font=("Arial", 10),
-        ).pack(side="right")
+            anchor="e",
+            justify="right",
+            wraplength=620,
+        ).grid(row=0, column=1, sticky="ew", padx=(16, 0))
 
         content = tk.PanedWindow(
             parent,
@@ -208,8 +251,11 @@ class DiagnosticsWindow:
             sashwidth=6,
             relief="flat",
         )
-        content.add(results_frame, minsize=180)
-        content.add(details_frame, minsize=260)
+        content.add(results_frame, minsize=150)
+        content.add(details_frame, minsize=220)
+
+        results_frame.grid_rowconfigure(0, weight=1)
+        results_frame.grid_columnconfigure(0, weight=1)
 
         self.result_tree = ttk.Treeview(
             results_frame,
@@ -218,21 +264,56 @@ class DiagnosticsWindow:
             style="Diagnostics.Treeview",
         )
         columns = (
-            ("manager", "Manager", 150),
-            ("target", "Unit / Slice / Process", 300),
-            ("health", "Health", 100),
-            ("restart", "Restart Policy", 120),
-            ("processes", "Processes", 80),
-            ("confidence", "Confidence", 90),
+            ("manager", "Manager", 150, 110),
+            ("target", "Unit / Slice / Process", 300, 190),
+            ("health", "Health", 100, 80),
+            ("restart", "Restart Policy", 120, 100),
+            ("processes", "Processes", 80, 70),
+            ("confidence", "Confidence", 90, 80),
         )
-        for column, label, width in columns:
+        for column, label, width, minwidth in columns:
             self.result_tree.heading(column, text=label)
-            self.result_tree.column(column, width=width, anchor="w")
+            self.result_tree.column(
+                column,
+                width=width,
+                minwidth=minwidth,
+                anchor="w",
+                stretch=True,
+            )
 
-        self.result_tree.tag_configure("healthy", background="#12351f", foreground="#4ade80")
-        self.result_tree.tag_configure("orphaned", background="#3a1717", foreground="#f87171")
-        self.result_tree.tag_configure("unknown", background="#1e293b", foreground="#cbd5e1")
-        self.result_tree.pack(fill="both", expand=True)
+        result_y = ttk.Scrollbar(
+            results_frame,
+            orient="vertical",
+            command=self.result_tree.yview,
+        )
+        result_x = ttk.Scrollbar(
+            results_frame,
+            orient="horizontal",
+            command=self.result_tree.xview,
+        )
+        self.result_tree.configure(
+            yscrollcommand=result_y.set,
+            xscrollcommand=result_x.set,
+        )
+
+        self.result_tree.tag_configure(
+            "healthy",
+            background="#12351f",
+            foreground="#4ade80",
+        )
+        self.result_tree.tag_configure(
+            "orphaned",
+            background="#3a1717",
+            foreground="#f87171",
+        )
+        self.result_tree.tag_configure(
+            "unknown",
+            background="#1e293b",
+            foreground="#cbd5e1",
+        )
+        self.result_tree.grid(row=0, column=0, sticky="nsew")
+        result_y.grid(row=0, column=1, sticky="ns")
+        result_x.grid(row=1, column=0, sticky="ew")
         self.result_tree.bind("<<TreeviewSelect>>", self._show_selected_group)
 
         detail_panel = tk.LabelFrame(
@@ -253,8 +334,11 @@ class DiagnosticsWindow:
             padx=8,
             pady=8,
         )
-        details_frame.add(detail_panel, minsize=520)
-        details_frame.add(command_panel, minsize=330)
+        details_frame.add(detail_panel, minsize=360)
+        details_frame.add(command_panel, minsize=300)
+
+        detail_panel.grid_rowconfigure(0, weight=1)
+        detail_panel.grid_columnconfigure(0, weight=1)
 
         self.detail_text = tk.Text(
             detail_panel,
@@ -262,10 +346,30 @@ class DiagnosticsWindow:
             fg=TEXT_FG,
             insertbackground="white",
             relief="flat",
-            wrap="word",
+            wrap="none",
             font=("Courier New", 9),
         )
-        self.detail_text.pack(fill="both", expand=True)
+        detail_y = ttk.Scrollbar(
+            detail_panel,
+            orient="vertical",
+            command=self.detail_text.yview,
+        )
+        detail_x = ttk.Scrollbar(
+            detail_panel,
+            orient="horizontal",
+            command=self.detail_text.xview,
+        )
+        self.detail_text.configure(
+            yscrollcommand=detail_y.set,
+            xscrollcommand=detail_x.set,
+        )
+
+        self.detail_text.grid(row=0, column=0, sticky="nsew")
+        detail_y.grid(row=0, column=1, sticky="ns")
+        detail_x.grid(row=1, column=0, sticky="ew")
+
+        command_panel.grid_rowconfigure(0, weight=1)
+        command_panel.grid_columnconfigure(0, weight=1)
 
         self.commands_listbox = tk.Listbox(
             command_panel,
@@ -277,7 +381,24 @@ class DiagnosticsWindow:
             font=("Courier New", 9),
             selectmode="extended",
         )
-        self.commands_listbox.pack(fill="both", expand=True)
+        command_y = ttk.Scrollbar(
+            command_panel,
+            orient="vertical",
+            command=self.commands_listbox.yview,
+        )
+        command_x = ttk.Scrollbar(
+            command_panel,
+            orient="horizontal",
+            command=self.commands_listbox.xview,
+        )
+        self.commands_listbox.configure(
+            yscrollcommand=command_y.set,
+            xscrollcommand=command_x.set,
+        )
+
+        self.commands_listbox.grid(row=0, column=0, sticky="nsew")
+        command_y.grid(row=0, column=1, sticky="ns")
+        command_x.grid(row=1, column=0, sticky="ew")
 
         self.copy_button = self._make_button(
             command_panel,
@@ -285,12 +406,13 @@ class DiagnosticsWindow:
             self.copy_selected_commands,
             "#0f766e",
         )
-        self.copy_button.pack(fill="x", pady=(8, 0))
+        self.copy_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
         self._set_text(
             self.detail_text,
             "Enter a PID, process name, command fragment or service name to begin.",
         )
+        self.copy_button.configure(state="disabled")
 
     def _make_button(self, parent, text, command, color):
         return tk.Button(
@@ -340,6 +462,7 @@ class DiagnosticsWindow:
         self.selected_group_index = None
         self.visible_command_items = []
         self.commands_listbox.delete(0, "end")
+        self.copy_button.configure(state="disabled")
         self._set_text(self.detail_text, "Analysis is running...")
 
         worker = threading.Thread(
@@ -533,13 +656,22 @@ class DiagnosticsWindow:
             prefix = item.get("label", "Command")
             self.commands_listbox.insert("end", f"[{prefix}] {item.get('command', '')}")
 
-        if not self.visible_command_items:
+        if self.visible_command_items:
+            self.copy_button.configure(state="normal")
+        else:
             self.commands_listbox.insert("end", "No commands available in the current mode.")
+            self.copy_button.configure(state="disabled")
 
         if hidden_count:
             self.status_var.set(
                 f"{hidden_count} potentially destructive command(s) hidden in Normal Mode."
             )
+        elif self.visible_command_items:
+            self.status_var.set(
+                f"{len(self.visible_command_items)} command(s) available for copying."
+            )
+        else:
+            self.status_var.set("No commands available in the current mode.")
 
     def copy_selected_commands(self):
         selected = self.commands_listbox.curselection()
