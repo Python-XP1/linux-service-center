@@ -24,9 +24,32 @@ dist/
 *.swo
 .DS_Store
 Thumbs.db
-.codex
-.agents
+.codex/
+.agents/
+
+# Local application state and user-specific configuration
 services.json
+settings.json
+favorites.json
+*.local.json
+*.db
+*.sqlite
+*.sqlite3
+*.pid
+*.sock
+
+# Environment files, credentials, and private keys
+.env
+.env.*
+!.env.example
+secrets.json
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
 
 # Syncthing metadata and conflict copies
 .stfolder/
@@ -36,4 +59,3 @@ services.json
 *.log
 *.tmp
 *.bak
-services.json
