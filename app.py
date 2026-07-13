@@ -1,13 +1,12 @@
-#app.py
+# app.py
 
-from ui.main_window import MainWindow
 from cli.menu import CliMenu
+from ui.application_window import ApplicationWindow
 
 
 class LinuxServiceCenterApp:
-
     def __init__(self):
-        self.gui = MainWindow()
+        self.gui = ApplicationWindow()
         self.cli = CliMenu()
 
     def run_gui(self):
@@ -15,4 +14,3 @@ class LinuxServiceCenterApp:
 
     def run_cli(self):
         self.cli.run()
-        
