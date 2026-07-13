@@ -3,7 +3,16 @@
 ![Python](https://img.shields.io/badge/python-3.x-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Status](https://img.shields.io/badge/status-active-success)
+![Status](https://img.shields.io/badge/status-work%20in%20progress-orange)
+
+> [!WARNING]
+> ## Development branch: `dev-dbus`
+>
+> This branch contains the **current development state** of Linux Service Center.
+>
+> It is **not a finished release** and may include incomplete features, experimental code, breaking changes or bugs. The branch is published so the ongoing development can be reviewed and tested.
+>
+> Do not use this branch as a production-ready system management tool. For the regular public version, use the `main` branch.
 
 Manage Linux services from a modern GUI or directly from a terminal interface.
 
@@ -130,6 +139,8 @@ CHANGELOG.md
 ## Project Status
 
 Linux Service Center is currently under active development.
+
+The `dev-dbus` branch is a public development snapshot and does not represent a finished or stable release. Features may still change, fail or be removed while the architecture, D-Bus integration and diagnostics are being developed.
 
 The project focuses on providing a simple, modern and beginner-friendly interface for managing Linux services on Raspberry Pi and Debian-based systems.
 
