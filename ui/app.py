@@ -1,13 +1,10 @@
-from ui.main_window import MainWindow
+from ui.application_window import ApplicationWindow
 
 
 def main():
-
-    app = MainWindow()
-
+    app = ApplicationWindow()
     app.run()
 
 
 if __name__ == "__main__":
-
     main()
