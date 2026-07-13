@@ -6,13 +6,11 @@
 ![Status](https://img.shields.io/badge/status-work%20in%20progress-orange)
 
 > [!WARNING]
-> ## Development branch: `dev-dbus`
+> ## Private development workspace: `pythonxp-lab/dev-dbus`
 >
-> This branch contains the **current development state** of Linux Service Center.
+> This repository contains the **active private development state** of Linux Service Center.
 >
-> It is **not a finished release** and may include incomplete features, experimental code, breaking changes or bugs. The branch is published so the ongoing development can be reviewed and tested.
->
-> Do not use this branch as a production-ready system management tool. For the regular public version, use the `main` branch.
+> It is **not a finished release** and may include incomplete features, experimental code, breaking changes or bugs. Tested development snapshots are mirrored separately to the public `linux-service-center/dev-dbus` branch.
 
 Manage Linux services from a modern GUI or directly from a terminal interface.
 
@@ -34,7 +32,9 @@ If your user has `NOPASSWD` privileges, no password prompt will appear.
 
 Local runtime files such as `services.json`, `settings.json` and `favorites.json` are intentionally excluded from Git. They may contain local service names, paths, URLs or user preferences and should not be committed.
 
-Never commit passwords, API keys, private keys, access tokens, local diagnostic exports or screenshots containing hostnames, IP addresses and personal service information.
+Never commit passwords, API keys, private keys, access tokens or local diagnostic exports.
+
+Before mirroring changes to the public repository, also check screenshots for hostnames, IP addresses, local paths and personal service information.
 
 Powered by PythonXP.
 
@@ -58,7 +58,9 @@ Powered by PythonXP.
 
 ## Screenshots
 
-Development screenshots from personal systems are intentionally not stored in this branch because they may expose local service names, filesystem paths, hostnames or network details.
+Private development screenshots may exist in this workspace for local testing and documentation.
+
+They must not be mirrored to the public repository until hostnames, IP addresses, paths and personal service information have been removed.
 
 Sanitized screenshots will be added before the next stable public release.
 
@@ -66,7 +68,7 @@ Sanitized screenshots will be added before the next stable public release.
 
 ## Installation
 
-Clone the repository:
+Clone the public repository:
 
 ```bash
 git clone https://github.com/Python-XP1/linux-service-center.git
@@ -121,6 +123,8 @@ ui/
 utils/
 
 README.md
+ROADMAP.md
+SESSION_HANDOVER.md
 LICENSE.txt
 CHANGELOG.md
 ```
@@ -131,10 +135,8 @@ CHANGELOG.md
 
 Linux Service Center is currently under active development.
 
-The `dev-dbus` branch is a public development snapshot and does not represent a finished or stable release. Features may still change, fail or be removed while the architecture, D-Bus integration and diagnostics are being developed.
+The private `pythonxp-lab/dev-dbus` branch is the development source of truth. Tested snapshots are pushed to the public `linux-service-center/dev-dbus` branch, while stable releases remain on public `main`.
 
 The project focuses on providing a simple, modern and beginner-friendly interface for managing Linux services on Raspberry Pi and Debian-based systems.
-
-Feedback and suggestions are welcome.
 
 Built with ❤️ by PythonXP.
