@@ -32,6 +32,10 @@ Whether a password is requested depends on your local `sudoers` configuration.
 
 If your user has `NOPASSWD` privileges, no password prompt will appear.
 
+Local runtime files such as `services.json`, `settings.json` and `favorites.json` are intentionally excluded from Git. They may contain local service names, paths, URLs or user preferences and should not be committed.
+
+Never commit passwords, API keys, private keys, access tokens, local diagnostic exports or screenshots containing hostnames, IP addresses and personal service information.
+
 Powered by PythonXP.
 
 ---
@@ -54,21 +58,9 @@ Powered by PythonXP.
 
 ## Screenshots
 
-### Main GUI
+Development screenshots from personal systems are intentionally not stored in this branch because they may expose local service names, filesystem paths, hostnames or network details.
 
-![Main GUI](screenshots/main_gui.png)
-
-### Diagnostics
-
-![Diagnostics](screenshots/diagnose.png)
-
-### Add Services
-
-![Add Services](screenshots/add_service.png)
-
-### CLI Mode
-
-![CLI](screenshots/cli.png)
+Sanitized screenshots will be added before the next stable public release.
 
 ---
 
@@ -125,7 +117,6 @@ diagnostics/
 legacy/
 models/
 monitoring/
-screenshots/
 ui/
 utils/
 
