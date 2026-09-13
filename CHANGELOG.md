@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.10.0-dev - 2026-09-13
+## 0.10.0-rc1 - 2026-09-13
 
-_Development snapshot. This is not yet a stable release._
+_Release candidate 1. This is not yet a stable release._
 
 ### Added
 

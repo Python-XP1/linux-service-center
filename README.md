@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.x-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Version](https://img.shields.io/badge/version-0.10.0--dev-B79A6A)
+![Version](https://img.shields.io/badge/version-0.10.0--rc1-B79A6A)
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 
 Linux Service Center is a Linux-only service management and diagnostics tool with a modern Tkinter GUI and an interactive CLI.
@@ -11,7 +11,7 @@ Linux Service Center is a Linux-only service management and diagnostics tool wit
 It is designed primarily for Raspberry Pi OS, Debian, Ubuntu, Linux Mint and other Linux distributions using `systemd`.
 
 > [!WARNING]
-> **Development version:** `v0.10.0-dev`
+> **Development version:** `v0.10.0-rc1`
 >
 > This is an active development snapshot, not a stable production release. Features, UI details and internal APIs may still change.
 
@@ -178,7 +178,7 @@ GUI and CLI intentionally share the same core service-management, catalog, favor
 
 ## Development status
 
-Current development version: **v0.10.0-dev**.
+Current development version: **v0.10.0-rc1**.
 
 The current development cycle focuses on CLI/GUI parity, safer administrative actions, Process Inspector diagnostics and a more polished desktop UI.
 
