@@ -81,7 +81,6 @@ The repository contains development screenshots used for documentation. They may
 
 ![Diagnostics window](screenshots/diagnose.png)
 
-Before publishing new screenshots, check them for hostnames, IP addresses, local paths or other personal information.
 
 ---
 
