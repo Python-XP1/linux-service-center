@@ -3,66 +3,103 @@
 ![Python](https://img.shields.io/badge/python-3.x-blue)
 ![Platform](https://img.shields.io/badge/platform-Linux-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-![Status](https://img.shields.io/badge/status-work%20in%20progress-orange)
+![Version](https://img.shields.io/badge/version-0.10.0--dev-B79A6A)
+![Status](https://img.shields.io/badge/status-active%20development-orange)
+
+Linux Service Center is a Linux-only service management and diagnostics tool with a modern Tkinter GUI and an interactive CLI.
+
+It is designed primarily for Raspberry Pi OS, Debian, Ubuntu, Linux Mint and other Linux distributions using `systemd`.
 
 > [!WARNING]
-> ## Private development workspace: `pythonxp-lab/dev-dbus`
+> **Development version:** `v0.10.0-dev`
 >
-> This repository contains the **active private development state** of Linux Service Center.
->
-> It is **not a finished release** and may include incomplete features, experimental code, breaking changes or bugs. Tested development snapshots are mirrored separately to the public `linux-service-center/dev-dbus` branch.
+> This is an active development snapshot, not a stable production release. Features, UI details and internal APIs may still change.
 
-Manage Linux services from a modern GUI or directly from a terminal interface.
+Public repository:
 
-Built for Raspberry Pi, Debian, Ubuntu and other Linux distributions.
-
-⚠️ Linux only
-
-This application requires `systemd` and is not compatible with Windows.
-
-⚠️ Linux Service Center is an early-stage home lab project built for personal Raspberry Pi setups. It is not intended as a production-ready server management solution.
-
-## Security note
-
-System services are executed through `sudo`.
-
-Whether a password is requested depends on your local `sudoers` configuration.
-
-If your user has `NOPASSWD` privileges, no password prompt will appear.
-
-Local runtime files such as `services.json`, `settings.json` and `favorites.json` are intentionally excluded from Git. They may contain local service names, paths, URLs or user preferences and should not be committed.
-
-Never commit passwords, API keys, private keys, access tokens or local diagnostic exports.
-
-Before mirroring changes to the public repository, also check screenshots for hostnames, IP addresses, local paths and personal service information.
-
-Powered by PythonXP.
+https://github.com/Python-XP1/linux-service-center
 
 ---
 
 ## Features
 
-- Modern dark themed GUI
-- Interactive CLI mode
+- Modern dark-themed GUI with responsive service controls
+- Interactive CLI with the same core service-management capabilities
+- SYSTEM and USER service discovery
 - Start / Stop / Restart services
 - Enable / Disable autostart
-- View service logs
-- Built-in diagnostics
-- Add and remove custom services
-- Search installed systemd services
-- Resource monitoring (CPU, RAM, Temperature, Disk)
-- Local URL shortcuts
-- Lightweight and beginner friendly
+- Add and remove saved services
+- Search and filter services by status and scope
+- Service details and status information
+- Service favorites shared between GUI and CLI
+- Service log viewer
+- Local service URL shortcuts
+- Auto-refresh service monitoring
+- System metrics for CPU, RAM, disk and temperature
+- Built-in system diagnostics
+- Process Inspector with process grouping, parent-chain inspection, manager detection, systemd-unit detection, restart-policy analysis and recovery guidance
+- Central fail-closed command safety classification for diagnostic suggestions
+- Normal Mode / Advanced Mode separation for write operations
+- D-Bus backend with `systemctl` fallback
+- Direct GitHub repository shortcut and About dialog in the GUI
+
+---
+
+## Safety model
+
+Read-only inspection and diagnostic features are available without Advanced Mode.
+
+Write operations such as Start, Stop, Restart, Enable, Disable, Add and Remove require **Advanced Mode** in both GUI and CLI.
+
+Advanced Mode validates administrator credentials with `sudo -v` and expires after five minutes of inactivity. System-scope write actions also require explicit confirmation before execution.
+
+The Process Inspector does not automatically execute the recovery commands it suggests. Suggested commands are classified centrally as normal/read-only or Advanced, and unknown or ambiguous command forms fail closed to Advanced.
+
+The selected service backend is D-Bus when available, with `systemctl` used as fallback.
+
+Local runtime files such as `services.json`, `settings.json` and `favorites.json` may contain local service names, paths, URLs or preferences. Do not commit sensitive local data, passwords, API keys, tokens, private keys or diagnostic exports.
 
 ---
 
 ## Screenshots
 
-Private development screenshots may exist in this workspace for local testing and documentation.
+The repository contains development screenshots used for documentation. They may lag slightly behind the latest development UI.
 
-They must not be mirrored to the public repository until hostnames, IP addresses, paths and personal service information have been removed.
+### Main GUI
 
-Sanitized screenshots will be added before the next stable public release.
+![Linux Service Center main GUI](screenshots/main_gui.png)
+
+### Add Service
+
+![Add service dialog](screenshots/add_service.png)
+
+### CLI
+
+![Linux Service Center CLI](screenshots/cli.png)
+
+### Diagnostics
+
+![Diagnostics window](screenshots/diagnose.png)
+
+Before publishing new screenshots, check them for hostnames, IP addresses, local paths or other personal information.
+
+---
+
+## Requirements
+
+- Linux with `systemd`
+- Python 3
+- Tkinter
+- `psutil`
+- Pillow for high-quality logo rendering
+
+Pillow is optional at runtime: if it is unavailable, the GUI still starts normally and simply omits the logo.
+
+On Debian-based systems, the recommended base packages are:
+
+```bash
+sudo apt install python3-tk python3-venv
+```
 
 ---
 
@@ -72,71 +109,87 @@ Clone the public repository:
 
 ```bash
 git clone https://github.com/Python-XP1/linux-service-center.git
-
-cd Linux-Service-Center
+cd linux-service-center
 ```
 
-Install dependencies:
+A virtual environment is recommended:
 
 ```bash
-pip install -r requirements.txt
-```
-
-## Start GUI
-
-```bash
-python -m ui.app
-```
-
-## Start CLI
-
-```bash
-python -m cli.app
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
 ```
 
 ---
 
-## Supported Systems
+## Start GUI
+
+From the project root:
+
+```bash
+python3 -m ui.app
+```
+
+## Start CLI
+
+From the project root:
+
+```bash
+python3 -m cli.app
+```
+
+---
+
+## Supported systems
 
 - Raspberry Pi OS
 - Debian
 - Ubuntu
 - Linux Mint
-- Other Linux distributions using systemd
+- Other Linux distributions using `systemd`
+
+Linux Service Center is not compatible with Windows.
 
 ---
 
-## Project Structure
+## Relevant project structure
 
 ```text
-Linux-Service-Center/
-
-assistant/
-backends/
-cli/
-core/
-diagnostics/
-legacy/
-models/
-monitoring/
-ui/
-utils/
-
-README.md
-ROADMAP.md
-SESSION_HANDOVER.md
-LICENSE.txt
-CHANGELOG.md
+linux-service-center/
+├── assistant/      # backend-related helper logic
+├── backends/       # D-Bus and systemctl service backends
+├── cli/            # terminal interface
+├── core/           # shared service, safety, auth, catalog and favorites logic
+├── diagnostics/    # system diagnostics and Process Inspector
+├── models/         # shared data models
+├── screenshots/    # README/documentation screenshots
+├── ui/             # Tkinter GUI, diagnostics window and shared theme
+├── app.py
+├── logo.PNG
+├── requirements.txt
+├── README.md
+├── CHANGELOG.md
+└── LICENSE.txt
 ```
+
+GUI and CLI intentionally share the same core service-management, catalog, favorites and safety logic to reduce behavioral drift between interfaces.
 
 ---
 
-## Project Status
+## Development status
 
-Linux Service Center is currently under active development.
+Current development version: **v0.10.0-dev**.
 
-The private `pythonxp-lab/dev-dbus` branch is the development source of truth. Tested snapshots are pushed to the public `linux-service-center/dev-dbus` branch, while stable releases remain on public `main`.
+The current development cycle focuses on CLI/GUI parity, safer administrative actions, Process Inspector diagnostics and a more polished desktop UI.
 
-The project focuses on providing a simple, modern and beginner-friendly interface for managing Linux services on Raspberry Pi and Debian-based systems.
+The latest stable release documented in the changelog remains **v0.9.4** until a new stable version is explicitly released.
 
-Built with ❤️ by PythonXP.
+---
+
+## License
+
+MIT License. See `LICENSE.txt`.
+
+---
+
+Built with ❤️ by PythonXP. Supported by AI.

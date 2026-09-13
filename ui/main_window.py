@@ -1,3 +1,5 @@
+from ui import theme
+
 # ui/main_window.py
 
 import json
@@ -61,89 +63,94 @@ class MainWindow:
     def build_ui(self):
         backend = get_backend_info()
 
-        self.root.configure(bg="#0f1724")
+        self.root.configure(bg=theme.BG_MAIN)
 
         style = ttk.Style()
         style.theme_use("clam")
 
         style.configure(
             "Treeview",
-            background="#121c2b",
-            foreground="white",
-            fieldbackground="#121c2b",
+            background=theme.BG_PANEL,
+            foreground=theme.TEXT_PRIMARY,
+            fieldbackground=theme.BG_PANEL,
             rowheight=28,
-            bordercolor="#1f2a3a",
-            borderwidth=0,
+            bordercolor=theme.BORDER_GOLD,
+            borderwidth=1,
         )
 
         style.configure(
             "Treeview.Heading",
-            background="#1f2a3a",
-            foreground="white",
+            background=theme.BG_HEADER,
+            foreground=theme.TEXT_PRIMARY,
             font=("Arial", 10, "bold"),
+            bordercolor=theme.BORDER_GOLD,
+            relief="flat",
         )
 
         style.map(
             "Treeview",
-            background=[("selected", "#2563eb")],
-            foreground=[("selected", "white")],
+            background=[("selected", theme.SELECTED)],
+            foreground=[("selected", theme.TEXT_PRIMARY)],
         )
 
-        header = tk.Frame(self.root, bg="#0f1724", padx=18, pady=14)
+        style.map("Treeview.Heading", background=[("active", theme.BG_TOOLBAR)])
+        style.configure("TScrollbar", background=theme.BG_HEADER,
+                        troughcolor=theme.BG_MAIN, arrowcolor=theme.TEXT_SECONDARY,
+                        bordercolor=theme.BORDER_GOLD)
+        style.map("TScrollbar", background=[("active", theme.SELECTED)])
+
+        header = tk.Frame(self.root, bg=theme.BG_MAIN, padx=18, pady=14)
         header.pack(fill="x")
 
         tk.Label(
             header,
             text="Linux Service Center",
-            bg="#0f1724",
-            fg="white",
+            bg=theme.BG_MAIN,
+            fg=theme.TEXT_PRIMARY,
             font=("Arial", 26, "bold"),
         ).pack(side="left")
 
         tk.Label(
             header,
             text=f"Backend: {backend['active_backend']}",
-            bg="#0f1724",
-            fg="#38bdf8",
+            bg=theme.BG_MAIN,
+            fg=theme.ACCENT_GOLD,
             font=("Arial", 11, "bold"),
         ).pack(side="right")
 
-        mode_frame = tk.Frame(header, bg="#0f1724")
+        mode_frame = tk.Frame(header, bg=theme.BG_MAIN)
         mode_frame.pack(side="right", padx=16)
 
         tk.Radiobutton(
             mode_frame,
+            **theme.RADIO,
             text="Normal Mode",
             value="normal",
             variable=self.safe_mode,
             command=self.switch_to_normal_mode,
-            bg="#0f1724",
-            fg="white",
-            selectcolor="#121c2b",
-            activebackground="#0f1724",
-            activeforeground="white",
+            bg=theme.BG_MAIN,
+            fg=theme.TEXT_PRIMARY,
             font=("Arial", 10, "bold"),
         ).pack(side="left", padx=4)
 
         tk.Radiobutton(
             mode_frame,
+            **theme.RADIO,
             text="Advanced Mode",
             value="advanced",
             variable=self.safe_mode,
             command=self.switch_to_advanced_mode,
-            bg="#0f1724",
-            fg="white",
-            selectcolor="#121c2b",
-            activebackground="#0f1724",
-            activeforeground="white",
+            bg=theme.BG_MAIN,
+            fg=theme.TEXT_PRIMARY,
             font=("Arial", 10, "bold"),
         ).pack(side="left", padx=4)
 
         self.metrics_label = tk.Label(
             self.root,
+            **theme.BORDER,
             textvariable=self.metrics_var,
-            bg="#121c2b",
-            fg="#e5e7eb",
+            bg=theme.BG_SECONDARY,
+            fg=theme.TEXT_PRIMARY,
             font=("Arial", 11, "bold"),
             anchor="w",
             padx=18,
@@ -151,29 +158,27 @@ class MainWindow:
         )
         self.metrics_label.pack(fill="x", padx=18, pady=(0, 6))
 
-        search_frame = tk.Frame(self.root, bg="#0f1724", padx=18, pady=6)
+        search_frame = tk.Frame(self.root, bg=theme.BG_MAIN, padx=18, pady=6)
         search_frame.pack(fill="x")
 
         tk.Label(
             search_frame,
             text="Search service",
-            bg="#0f1724",
-            fg="#cbd5e1",
+            bg=theme.BG_MAIN,
+            fg=theme.TEXT_SECONDARY,
             font=("Arial", 10, "bold"),
         ).pack(side="left", padx=(0, 10))
 
         search_entry = tk.Entry(
             search_frame,
+            **theme.INPUT,
             textvariable=self.search_var,
-            bg="#121c2b",
-            fg="white",
-            insertbackground="white",
             relief="flat",
             font=("Arial", 11),
         )
         search_entry.pack(side="left", fill="x", expand=True)
 
-        filter_frame = tk.Frame(self.root, bg="#0f1724", padx=18, pady=6)
+        filter_frame = tk.Frame(self.root, bg=theme.BG_MAIN, padx=18, pady=6)
         filter_frame.pack(fill="x")
 
         for label, value in [
@@ -185,15 +190,13 @@ class MainWindow:
         ]:
             tk.Radiobutton(
                 filter_frame,
+                **theme.RADIO,
                 text=label,
                 value=value,
                 variable=self.filter_var,
                 command=self.render_services,
-                bg="#0f1724",
-                fg="white",
-                selectcolor="#121c2b",
-                activebackground="#0f1724",
-                activeforeground="white",
+                bg=theme.BG_MAIN,
+                fg=theme.TEXT_PRIMARY,
                 font=("Arial", 10, "bold"),
             ).pack(side="left", padx=6)
 
@@ -214,97 +217,98 @@ class MainWindow:
             self.tree.heading(col, text=text)
             self.tree.column(col, width=width)
 
-        self.tree.tag_configure("active", background="#12351f", foreground="#4ade80")
-        self.tree.tag_configure("inactive", background="#3a1717", foreground="#f87171")
-        self.tree.tag_configure("unknown", background="#1e293b", foreground="#cbd5e1")
+        self.tree.tag_configure("active", background=theme.ACTIVE_BG, foreground=theme.ACTIVE_FG)
+        self.tree.tag_configure("inactive", background=theme.INACTIVE_BG, foreground=theme.INACTIVE_FG)
+        self.tree.tag_configure("unknown", background=theme.NEUTRAL_BG, foreground=theme.TEXT_SECONDARY)
 
         self.tree.pack(fill="both", expand=True, padx=18, pady=10)
         self.tree.bind("<<TreeviewSelect>>", self.register_user_activity, add="+")
 
-        buttons = tk.Frame(self.root, bg="#0f1724", padx=18, pady=14)
+        buttons = tk.Frame(self.root, bg=theme.BG_PANEL, padx=18, pady=14, **theme.BORDER)
         buttons.pack(fill="x")
 
-        self.make_button(buttons, "Refresh", self.refresh_services, "#334155").pack(
+        self.make_button(buttons, "Refresh", self.refresh_services, theme.BG_SECONDARY).pack(
             side="left", padx=6
         )
         self.make_button(
             buttons,
             "Details",
             self.show_service_details,
-            "#475569",
+            theme.BG_SECONDARY,
         ).pack(side="left", padx=6)
         self.make_button(
             buttons,
             "Favorite",
             self.toggle_selected_favorite,
-            "#f59e0b",
+            theme.BG_SECONDARY,
         ).pack(side="left", padx=6)
         self.add_button = self.make_button(
             buttons,
             "Add",
             self.add_service_dialog,
-            "#0ea5e9",
+            theme.ADD_BG,
         )
         self.add_button.pack(side="left", padx=6)
         self.remove_button = self.make_button(
             buttons,
             "Remove",
             self.remove_selected_service,
-            "#be123c",
+            theme.REMOVE_BG,
         )
         self.remove_button.pack(side="left", padx=6)
         self.start_button = self.make_button(
             buttons,
             "Start",
             self.start_selected,
-            "#15803d",
+            theme.START_BG,
         )
         self.start_button.pack(side="left", padx=6)
         self.stop_button = self.make_button(
             buttons,
             "Stop",
             self.stop_selected,
-            "#b91c1c",
+            theme.STOP_BG,
         )
         self.stop_button.pack(side="left", padx=6)
         self.restart_button = self.make_button(
             buttons,
             "Restart",
             self.restart_selected,
-            "#c2410c",
+            theme.RESTART_BG,
         )
         self.restart_button.pack(side="left", padx=6)
         self.enable_button = self.make_button(
-            buttons, "Enable", self.enable_selected, "#2563eb"
+            buttons, "Enable", self.enable_selected, theme.ENABLE_BG
         )
         self.enable_button.pack(side="left", padx=6)
         self.disable_button = self.make_button(
-            buttons, "Disable", self.disable_selected, "#64748b"
+            buttons, "Disable", self.disable_selected, theme.DISABLE_BG
         )
         self.disable_button.pack(side="left", padx=6)
-        self.make_button(buttons, "Logs", self.show_logs_selected, "#7c3aed").pack(
+        self.make_button(buttons, "Logs", self.show_logs_selected, theme.BG_SECONDARY).pack(
             side="left", padx=6
         )
-        self.make_button(buttons, "Open URL", self.open_selected_url, "#0f766e").pack(
+        self.make_button(buttons, "Open URL", self.open_selected_url, theme.BG_SECONDARY).pack(
             side="left", padx=6
         )
         auto_refresh_check = tk.Checkbutton(
             buttons,
+            **theme.BORDER,
             text="Auto refresh",
             variable=self.auto_refresh_enabled,
-            bg="#0f1724",
-            fg="white",
-            selectcolor="#121c2b",
-            activebackground="#0f1724",
-            activeforeground="white",
+            bg=theme.BG_PANEL,
+            fg=theme.TEXT_PRIMARY,
+            selectcolor=theme.BG_PANEL,
+            activebackground=theme.BG_PANEL,
+            activeforeground=theme.TEXT_PRIMARY,
             font=("Arial", 10, "bold"),
         )
         auto_refresh_check.pack(side="left", padx=12)
         tk.Label(
             buttons,
             textvariable=self.refresh_status_var,
-            bg="#0f1724",
-            fg="#94a3b8",
+            bg=theme.BG_PANEL,
+            fg=theme.TEXT_SECONDARY,
             font=("Arial", 10),
         ).pack(side="left", padx=12)
 
@@ -366,7 +370,7 @@ class MainWindow:
         warning = tk.Toplevel(self.root)
         warning.title("Advanced Mode Warning")
         warning.geometry("560x280")
-        warning.configure(bg="#0f1724")
+        warning.configure(bg=theme.BG_MAIN)
         warning.transient(self.root)
 
         skip_var = tk.BooleanVar(value=False)
@@ -382,8 +386,8 @@ class MainWindow:
         tk.Label(
             warning,
             text=text,
-            bg="#0f1724",
-            fg="white",
+            bg=theme.BG_MAIN,
+            fg=theme.TEXT_PRIMARY,
             justify="left",
             wraplength=480,
             padx=18,
@@ -394,14 +398,14 @@ class MainWindow:
             warning,
             text="Do not show this warning again",
             variable=skip_var,
-            bg="#0f1724",
-            fg="white",
-            selectcolor="#121c2b",
-            activebackground="#0f1724",
-            activeforeground="white",
+            bg=theme.BG_MAIN,
+            fg=theme.TEXT_PRIMARY,
+            selectcolor=theme.BG_PANEL,
+            activebackground=theme.BG_MAIN,
+            activeforeground=theme.TEXT_PRIMARY,
         ).pack(anchor="w", padx=18)
 
-        button_row = tk.Frame(warning, bg="#0f1724")
+        button_row = tk.Frame(warning, bg=theme.BG_MAIN)
         button_row.pack(fill="x", padx=18, pady=18)
 
         def cancel():
@@ -415,10 +419,10 @@ class MainWindow:
             result["skip_warning"] = skip_var.get()
             warning.destroy()
 
-        self.make_button(button_row, "Cancel", cancel, "#64748b").pack(
+        self.make_button(button_row, "Cancel", cancel, theme.DISABLE_BG).pack(
             side="right", padx=6
         )
-        self.make_button(button_row, "OK", accept, "#2563eb").pack(side="right", padx=6)
+        self.make_button(button_row, "OK", accept, theme.ENABLE_BG).pack(side="right", padx=6)
 
         warning.update_idletasks()
         warning.wait_visibility()
@@ -432,14 +436,14 @@ class MainWindow:
         result = {"password": None}
         dialog = tk.Toplevel(self.root)
         dialog.title("Administrator Authentication")
-        dialog.configure(bg="#0f1724")
+        dialog.configure(bg=theme.BG_MAIN)
         dialog.transient(self.root)
 
         tk.Label(
             dialog,
             text="Enter your password to enable Advanced Mode.",
-            bg="#0f1724",
-            fg="white",
+            bg=theme.BG_MAIN,
+            fg=theme.TEXT_PRIMARY,
             justify="left",
             padx=18,
             pady=18,
@@ -448,17 +452,15 @@ class MainWindow:
         password_var = tk.StringVar()
         password_entry = tk.Entry(
             dialog,
+            **theme.INPUT,
             textvariable=password_var,
             show="*",
-            bg="#121c2b",
-            fg="white",
-            insertbackground="white",
             relief="flat",
             font=("Arial", 11),
         )
         password_entry.pack(fill="x", padx=18)
 
-        button_row = tk.Frame(dialog, bg="#0f1724")
+        button_row = tk.Frame(dialog, bg=theme.BG_MAIN)
         button_row.pack(fill="x", padx=18, pady=18)
 
         def cancel():
@@ -472,10 +474,10 @@ class MainWindow:
         dialog.protocol("WM_DELETE_WINDOW", cancel)
         password_entry.bind("<Return>", accept)
 
-        self.make_button(button_row, "Cancel", cancel, "#64748b").pack(
+        self.make_button(button_row, "Cancel", cancel, theme.DISABLE_BG).pack(
             side="right", padx=6
         )
-        self.make_button(button_row, "OK", accept, "#2563eb").pack(side="right", padx=6)
+        self.make_button(button_row, "OK", accept, theme.ENABLE_BG).pack(side="right", padx=6)
 
         dialog.update_idletasks()
         dialog.wait_visibility()
@@ -547,7 +549,7 @@ class MainWindow:
             self.enable_button,
             self.disable_button,
         ]:
-            button.config(state=state)
+            theme.set_button_state(button, state)
 
     def load_favorites(self):
         if not FAVORITES_FILE.exists():
@@ -625,7 +627,7 @@ class MainWindow:
         dialog = tk.Toplevel(self.root)
         dialog.title("Add Service")
         dialog.geometry("420x240")
-        dialog.configure(bg="#0f1724")
+        dialog.configure(bg=theme.BG_MAIN)
 
         scope_var = tk.StringVar(value="system")
         service_var = tk.StringVar()
@@ -633,17 +635,15 @@ class MainWindow:
         tk.Label(
             dialog,
             text="Service",
-            bg="#0f1724",
-            fg="white",
+            bg=theme.BG_MAIN,
+            fg=theme.TEXT_PRIMARY,
             font=("Arial", 10, "bold"),
         ).pack(anchor="w", padx=18, pady=(18, 6))
 
         service_entry = tk.Entry(
             dialog,
+            **theme.INPUT,
             textvariable=service_var,
-            bg="#121c2b",
-            fg="white",
-            insertbackground="white",
             relief="flat",
             font=("Arial", 11),
         )
@@ -653,25 +653,23 @@ class MainWindow:
         tk.Label(
             dialog,
             text="Scope",
-            bg="#0f1724",
-            fg="white",
+            bg=theme.BG_MAIN,
+            fg=theme.TEXT_PRIMARY,
             font=("Arial", 10, "bold"),
         ).pack(anchor="w", padx=18, pady=(16, 6))
 
-        scope_frame = tk.Frame(dialog, bg="#0f1724")
+        scope_frame = tk.Frame(dialog, bg=theme.BG_MAIN)
         scope_frame.pack(fill="x", padx=18)
 
         for scope in ["system", "user"]:
             tk.Radiobutton(
                 scope_frame,
+                **theme.RADIO,
                 text=scope,
                 value=scope,
                 variable=scope_var,
-                bg="#0f1724",
-                fg="white",
-                selectcolor="#121c2b",
-                activebackground="#0f1724",
-                activeforeground="white",
+                bg=theme.BG_MAIN,
+                fg=theme.TEXT_PRIMARY,
                 font=("Arial", 10, "bold"),
             ).pack(side="left", padx=(0, 12))
 
@@ -700,7 +698,7 @@ class MainWindow:
             self.refresh_services()
             messagebox.showinfo("Service added", "Service saved successfully.")
 
-        self.make_button(dialog, "Save", save_service, "#0ea5e9").pack(
+        self.make_button(dialog, "Save", save_service, theme.ADD_BG).pack(
             anchor="e",
             padx=18,
             pady=18,
@@ -742,12 +740,11 @@ class MainWindow:
     def make_button(self, parent, text, command, color):
         return tk.Button(
             parent,
+            **theme.BUTTON,
             text=text,
             command=command,
             bg=color,
-            fg="white",
-            activebackground=color,
-            activeforeground="white",
+            fg=theme.TEXT_PRIMARY,
             relief="flat",
             padx=20,
             pady=8,
@@ -1013,13 +1010,11 @@ class MainWindow:
         log_window = tk.Toplevel(self.root)
         log_window.title(f"Logs - {service.service}")
         log_window.geometry("900x520")
-        log_window.configure(bg="#0f1724")
+        log_window.configure(bg=theme.BG_MAIN)
 
         text = tk.Text(
             log_window,
-            bg="#020617",
-            fg="#e5e7eb",
-            insertbackground="white",
+            **theme.INPUT,
             relief="flat",
             wrap="word",
             font=("Courier New", 10),
@@ -1113,13 +1108,11 @@ class MainWindow:
         details_window = tk.Toplevel(self.root)
         details_window.title("Service Details")
         details_window.geometry("760x420")
-        details_window.configure(bg="#0f1724")
+        details_window.configure(bg=theme.BG_MAIN)
 
         text = tk.Text(
             details_window,
-            bg="#020617",
-            fg="#e5e7eb",
-            insertbackground="white",
+            **theme.INPUT,
             relief="flat",
             wrap="word",
             font=("Courier New", 10),

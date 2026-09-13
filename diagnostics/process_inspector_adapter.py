@@ -1,58 +1,18 @@
-import shlex
-
+# Keep existing imports available to callers while sharing one policy implementation.
+from core.command_safety import (
+    READ_ONLY_SYSTEMCTL_ACTIONS,
+    DESTRUCTIVE_PROCESS_COMMANDS,
+    SYSTEMCTL_OPTIONS_WITH_VALUE,
+    split_command,
+    command_name,
+    systemctl_action,
+    command_requires_advanced,
+)
 from diagnostics.process_inspector import analyze_query, group_results
 
 
-DESTRUCTIVE_SYSTEMCTL_ACTIONS = {
-    "disable",
-    "enable",
-    "kill",
-    "mask",
-    "reenable",
-    "reload-or-restart",
-    "restart",
-    "start",
-    "stop",
-    "try-restart",
-    "unmask",
-}
-DESTRUCTIVE_PROCESS_COMMANDS = {"kill", "killall", "pkill"}
-
-
-def split_command(command: str) -> list[str]:
-    try:
-        return shlex.split(command)
-    except ValueError:
-        return command.split()
-
-
-def command_requires_advanced(command: str) -> bool:
-    """Return True when copying the command should require Advanced Mode."""
-    parts = split_command(command.strip())
-    if not parts:
-        return False
-
-    if parts[0] == "sudo":
-        parts = parts[1:]
-    if not parts:
-        return False
-
-    executable = parts[0]
-    if executable in DESTRUCTIVE_PROCESS_COMMANDS:
-        return True
-
-    if executable != "systemctl":
-        return False
-
-    for token in parts[1:]:
-        if token.startswith("-"):
-            continue
-        return token in DESTRUCTIVE_SYSTEMCTL_ACTIONS
-
-    return False
-
-
 def build_command_items(result: dict) -> list[dict]:
+    """Build shared CLI/GUI suggestions; source_key identifies the original group."""
     command_groups = (
         ("suggested", "Suggested command", "suggested_commands"),
         ("respawn-test", "Respawn test", "respawn_test_commands"),
@@ -66,6 +26,7 @@ def build_command_items(result: dict) -> list[dict]:
                 {
                     "command": command,
                     "category": category,
+                    "source_key": key,
                     "label": label,
                     "requires_advanced": command_requires_advanced(command),
                 }

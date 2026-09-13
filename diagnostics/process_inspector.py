@@ -11,6 +11,7 @@ RESPAWN_POLICIES = {
     "always",
     "on-failure",
     "on-abnormal",
+    "on-abort",
     "on-watchdog",
     "on-success",
 }
@@ -240,7 +241,8 @@ def detect_restart_policy(manager: dict) -> str:
     result = run_command(command)
     if result is None or result.returncode != 0:
         return "unknown"
-    return result.stdout.strip() or "unknown"
+    policy = result.stdout.strip()
+    return policy if policy in RESPAWN_POLICIES | {"no"} else "unknown"
 
 
 def split_cmdline(cmdline: str) -> list[str]:
@@ -277,13 +279,27 @@ def choose_respawn_search_term(process: dict) -> str:
     return process.get("exe", "") or (parts[0] if parts else str(process.get("pid", 0)))
 
 
-def build_respawn_test_commands(process: dict) -> list[str]:
+def build_respawn_test_commands(process: dict, manager: dict | None = None) -> list[str]:
+    if manager and manager.get("type") in {"systemd-system", "systemd-user"}:
+        unit = manager.get("unit", "")
+        if not unit:
+            return []
+        base = systemctl_base(manager["type"])
+        return [
+            shlex.join(base + [
+                "show", "--property=Restart,MainPID,Type,ExitType,RestartUSec,NRestarts,"
+                "SuccessExitStatus,RestartPreventExitStatus,RestartForceExitStatus,"
+                "StartLimitIntervalUSec,StartLimitBurst", "--", unit,
+            ]),
+            shlex.join(base + ["status", "--no-pager", "--", unit]),
+        ]
+
     pid = process.get("pid", 0)
     search_term = choose_respawn_search_term(process)
     return [
         f"kill {pid}",
         "sleep 2",
-        f'python diagnostics/process_inspector.py "{search_term}"',
+        shlex.join(["python", "diagnostics/process_inspector.py", search_term]),
     ]
 
 
@@ -366,23 +382,36 @@ def build_recovery_advice(manager: dict) -> dict:
             "recommended_order": order,
         }
 
-    if manager_type in {"systemd-user", "systemd-system"} and restart_policy in RESPAWN_POLICIES:
-        order = [
-            "Stop the service unit first.",
-            "Disable the service unit if it should not start again.",
-            "Run the respawn test again.",
-        ]
-        if is_safe_slice_target(slice_name):
-            order.append("If the unit cannot be stopped, inspect or stop its custom slice.")
-        order.append("Inspect logs if the process still comes back.")
+    if manager_type in {"systemd-user", "systemd-system"}:
+        expectations = {
+            "no": "Restart=no: no automatic restart from this policy.",
+            "always": "Restart=always: restart expected after SIGTERM or SIGKILL.",
+            "on-success": "Restart=on-success: restart expected after SIGTERM, not SIGKILL.",
+            "on-failure": "Restart=on-failure: restart expected after SIGKILL, not SIGTERM.",
+            "on-abnormal": "Restart=on-abnormal: restart expected after SIGKILL, not SIGTERM.",
+            "on-abort": "Restart=on-abort: restart expected after SIGKILL, not SIGTERM.",
+            "on-watchdog": "Restart=on-watchdog: only a watchdog timeout triggers restart.",
+        }
         return {
-            "summary": "Process is managed by systemd and may restart automatically.",
+            "summary": expectations.get(
+                restart_policy, "Restart behavior unknown: effective policy unavailable."
+            ),
             "details": [
                 f"Unit: {unit}",
-                f"Restart policy: {restart_policy}",
-                "Killing only the PID is usually not enough.",
+                "This estimate assumes the main process exits from the signal, standard "
+                "exit-status settings and Type other than oneshot. kill PID sends SIGTERM.",
+                "A child process exiting alone may not trigger a service restart; "
+                "compare the PID with MainPID and check ExitType.",
+                "SuccessExitStatus, RestartPreventExitStatus and RestartForceExitStatus "
+                "can change the outcome. RestartUSec and start limits can delay or block it.",
+                "A program may handle SIGTERM itself. Other supervisors or activation "
+                "sources may also start it again. systemctl stop suppresses policy restarts.",
             ],
-            "recommended_order": order,
+            "recommended_order": [
+                "Run the read-only respawn checks to inspect the effective settings.",
+                "Compare MainPID and NRestarts before and after an independently planned "
+                "manual test; allow for RestartUSec. These checks do not terminate anything.",
+            ],
         }
 
     if manager_type == "application-managed":
@@ -464,7 +493,7 @@ def analyze_query(query: str) -> list[dict]:
                 "group_key": build_group_key(process, manager),
                 "confidence": build_confidence_score(manager, parent_chain),
                 "suggested_commands": build_suggested_commands(process, manager),
-                "respawn_test_commands": build_respawn_test_commands(process),
+                "respawn_test_commands": build_respawn_test_commands(process, manager),
                 "slice_recovery_commands": build_slice_recovery_commands(manager),
                 "recovery_advice": build_recovery_advice(manager),
                 "parent_chain": parent_chain,
@@ -551,7 +580,7 @@ def print_process_result(result: dict) -> None:
     print()
 
     print("Respawn test:")
-    print("  These commands can be run manually to check whether the process comes back:")
+    print("  Manual checks only; no commands are executed by the inspector.")
     for command in result.get("respawn_test_commands", []):
         print(f"  {command}")
     print()

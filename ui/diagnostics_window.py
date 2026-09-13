@@ -1,3 +1,5 @@
+from ui import theme
+
 import queue
 import threading
 import tkinter as tk
@@ -8,13 +10,13 @@ from diagnostics.process_inspector_adapter import analyze_grouped_query
 from diagnostics.system_info import get_system_diagnostics
 
 
-BG = "#0f1724"
-PANEL = "#121c2b"
-PANEL_ALT = "#1f2a3a"
-TEXT_BG = "#020617"
-TEXT_FG = "#e5e7eb"
-MUTED = "#94a3b8"
-ACCENT = "#38bdf8"
+BG = theme.BG_MAIN
+PANEL = theme.BG_PANEL
+PANEL_ALT = theme.BG_HEADER
+TEXT_BG = theme.BG_MAIN
+TEXT_FG = theme.TEXT_PRIMARY
+MUTED = theme.TEXT_SECONDARY
+ACCENT = theme.ACCENT_GOLD
 
 
 class DiagnosticsWindow:
@@ -75,27 +77,29 @@ class DiagnosticsWindow:
         )
         style.map(
             "Diagnostics.TNotebook.Tab",
-            background=[("selected", "#2563eb")],
-            foreground=[("selected", "white")],
+            background=[("selected", theme.SELECTED)],
+            foreground=[("selected", theme.TEXT_PRIMARY)],
         )
         style.configure(
             "Diagnostics.Treeview",
             background=PANEL,
-            foreground="white",
+            foreground=theme.TEXT_PRIMARY,
             fieldbackground=PANEL,
             rowheight=27,
-            borderwidth=0,
+            bordercolor=theme.BORDER_GOLD,
+            borderwidth=1,
         )
         style.configure(
             "Diagnostics.Treeview.Heading",
+            bordercolor=theme.BORDER_GOLD,
             background=PANEL_ALT,
-            foreground="white",
+            foreground=theme.TEXT_PRIMARY,
             font=("Arial", 10, "bold"),
         )
         style.map(
             "Diagnostics.Treeview",
-            background=[("selected", "#2563eb")],
-            foreground=[("selected", "white")],
+            background=[("selected", theme.SELECTED)],
+            foreground=[("selected", theme.TEXT_PRIMARY)],
         )
 
     def _build_ui(self):
@@ -107,7 +111,7 @@ class DiagnosticsWindow:
             header,
             text="Diagnostics",
             bg=BG,
-            fg="white",
+            fg=theme.TEXT_PRIMARY,
             font=("Arial", 24, "bold"),
         ).grid(row=0, column=0, sticky="w")
 
@@ -141,7 +145,7 @@ class DiagnosticsWindow:
             toolbar,
             "Refresh system overview",
             self.refresh_system_overview,
-            "#334155",
+            theme.BG_SECONDARY,
         ).pack(side="left")
 
         text_frame = tk.Frame(parent, bg=BG)
@@ -151,9 +155,7 @@ class DiagnosticsWindow:
 
         self.system_text = tk.Text(
             text_frame,
-            bg=TEXT_BG,
-            fg=TEXT_FG,
-            insertbackground="white",
+            **theme.INPUT,
             relief="flat",
             wrap="none",
             font=("Courier New", 10),
@@ -186,16 +188,14 @@ class DiagnosticsWindow:
             search_frame,
             text="PID, process, command or service",
             bg=BG,
-            fg="#cbd5e1",
+            fg=theme.TEXT_SECONDARY,
             font=("Arial", 10, "bold"),
         ).grid(row=0, column=0, sticky="w", padx=(0, 10))
 
         self.query_entry = tk.Entry(
             search_frame,
+            **theme.INPUT,
             textvariable=self.query_var,
-            bg=PANEL,
-            fg="white",
-            insertbackground="white",
             relief="flat",
             font=("Arial", 11),
         )
@@ -206,7 +206,7 @@ class DiagnosticsWindow:
             search_frame,
             "Analyze",
             self.start_analysis,
-            "#2563eb",
+            theme.ENABLE_BG,
         )
         self.analyze_button.grid(row=0, column=2, sticky="e", padx=(10, 0))
 
@@ -298,18 +298,18 @@ class DiagnosticsWindow:
 
         self.result_tree.tag_configure(
             "healthy",
-            background="#12351f",
-            foreground="#4ade80",
+            background=theme.ACTIVE_BG,
+            foreground=theme.ACTIVE_FG,
         )
         self.result_tree.tag_configure(
             "orphaned",
-            background="#3a1717",
-            foreground="#f87171",
+            background=theme.INACTIVE_BG,
+            foreground=theme.INACTIVE_FG,
         )
         self.result_tree.tag_configure(
             "unknown",
-            background="#1e293b",
-            foreground="#cbd5e1",
+            background=theme.NEUTRAL_BG,
+            foreground=theme.TEXT_SECONDARY,
         )
         self.result_tree.grid(row=0, column=0, sticky="nsew")
         result_y.grid(row=0, column=1, sticky="ns")
@@ -318,18 +318,20 @@ class DiagnosticsWindow:
 
         detail_panel = tk.LabelFrame(
             details_frame,
+            **theme.BORDER,
             text="Analysis details",
             bg=BG,
-            fg="white",
+            fg=theme.TEXT_PRIMARY,
             font=("Arial", 10, "bold"),
             padx=8,
             pady=8,
         )
         command_panel = tk.LabelFrame(
             details_frame,
+            **theme.BORDER,
             text="Copyable commands",
             bg=BG,
-            fg="white",
+            fg=theme.TEXT_PRIMARY,
             font=("Arial", 10, "bold"),
             padx=8,
             pady=8,
@@ -342,9 +344,7 @@ class DiagnosticsWindow:
 
         self.detail_text = tk.Text(
             detail_panel,
-            bg=TEXT_BG,
-            fg=TEXT_FG,
-            insertbackground="white",
+            **theme.INPUT,
             relief="flat",
             wrap="none",
             font=("Courier New", 9),
@@ -373,10 +373,11 @@ class DiagnosticsWindow:
 
         self.commands_listbox = tk.Listbox(
             command_panel,
+            **theme.BORDER,
             bg=TEXT_BG,
             fg=TEXT_FG,
-            selectbackground="#2563eb",
-            selectforeground="white",
+            selectbackground=theme.SELECTED,
+            selectforeground=theme.TEXT_PRIMARY,
             relief="flat",
             font=("Courier New", 9),
             selectmode="extended",
@@ -404,7 +405,7 @@ class DiagnosticsWindow:
             command_panel,
             "Copy selected",
             self.copy_selected_commands,
-            "#0f766e",
+            theme.BG_SECONDARY,
         )
         self.copy_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
@@ -412,17 +413,16 @@ class DiagnosticsWindow:
             self.detail_text,
             "Enter a PID, process name, command fragment or service name to begin.",
         )
-        self.copy_button.configure(state="disabled")
+        theme.set_button_state(self.copy_button, "disabled")
 
     def _make_button(self, parent, text, command, color):
         return tk.Button(
             parent,
+            **theme.BUTTON,
             text=text,
             command=command,
             bg=color,
-            fg="white",
-            activebackground=color,
-            activeforeground="white",
+            fg=theme.TEXT_PRIMARY,
             relief="flat",
             padx=16,
             pady=7,
@@ -455,14 +455,14 @@ class DiagnosticsWindow:
         self.analysis_request_id += 1
         request_id = self.analysis_request_id
         self.analysis_running = True
-        self.analyze_button.configure(state="disabled", text="Analyzing...")
+        theme.set_button_state(self.analyze_button, "disabled", text="Analyzing...")
         self.status_var.set(f"Analyzing: {query}")
         self.result_tree.delete(*self.result_tree.get_children())
         self.groups = []
         self.selected_group_index = None
         self.visible_command_items = []
         self.commands_listbox.delete(0, "end")
-        self.copy_button.configure(state="disabled")
+        theme.set_button_state(self.copy_button, "disabled")
         self._set_text(self.detail_text, "Analysis is running...")
 
         worker = threading.Thread(
@@ -503,7 +503,7 @@ class DiagnosticsWindow:
 
     def _finish_analysis(self, groups, error):
         self.analysis_running = False
-        self.analyze_button.configure(state="normal", text="Analyze")
+        theme.set_button_state(self.analyze_button, "normal", text="Analyze")
 
         if error:
             self.status_var.set("Analysis failed.")
@@ -657,10 +657,10 @@ class DiagnosticsWindow:
             self.commands_listbox.insert("end", f"[{prefix}] {item.get('command', '')}")
 
         if self.visible_command_items:
-            self.copy_button.configure(state="normal")
+            theme.set_button_state(self.copy_button, "normal")
         else:
             self.commands_listbox.insert("end", "No commands available in the current mode.")
-            self.copy_button.configure(state="disabled")
+            theme.set_button_state(self.copy_button, "disabled")
 
         if hidden_count:
             self.status_var.set(
